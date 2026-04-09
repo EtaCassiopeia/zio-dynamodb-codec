@@ -24,6 +24,8 @@ lazy val root = project
     publishLocal := {}
   )
 
+val zioVersion = "2.1.24"
+
 lazy val `schema-dynamodb` = project
   .in(file("schema-dynamodb"))
   .settings(commonSettings)
@@ -31,6 +33,9 @@ lazy val `schema-dynamodb` = project
     name := "zio-blocks-schema-dynamodb",
     libraryDependencies ++= Seq(
       "dev.zio"               %% "zio-blocks-schema" % zioBlocksVersion,
-      "software.amazon.awssdk" % "dynamodb"          % awsSdkVersion
-    )
+      "software.amazon.awssdk" % "dynamodb"          % awsSdkVersion,
+      "dev.zio"               %% "zio-test"          % zioVersion % Test,
+      "dev.zio"               %% "zio-test-sbt"      % zioVersion % Test
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )

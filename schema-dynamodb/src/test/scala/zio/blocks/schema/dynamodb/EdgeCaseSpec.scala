@@ -9,6 +9,7 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   case class SimpleRec(x: String, y: Int) derives Schema
   case class AllOptional(a: Option[String], b: Option[Int], c: Option[Boolean]) derives Schema
   case class WithOptionalRecord(data: Option[SimpleRec]) derives Schema
+  case class WithVectorField(items: Vector[String]) derives Schema
 
   def spec = suite("EdgeCaseSpec")(
     suite("Primitives")(
@@ -86,6 +87,21 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         map.put("data", AttributeValue.builder().nul(true).build())
         val back = codec.decode(map)
         assertTrue(back == Right(WithOptionalRecord(None)))
+      }
+    ),
+    suite("Collections")(
+      test("empty List round-trip") {
+        val codec = DynamoDB.codec[List[String]]
+        val av    = codec.encodeValue(List.empty[String])
+        assertTrue(av.hasL, av.l().size() == 0, codec.decodeValue(av) == Right(List.empty[String]))
+      },
+      test("Vector[String] round-trip") {
+        val codec = DynamoDB.codec[WithVectorField]
+        val value = WithVectorField(Vector("a", "b", "c"))
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(value, map)
+        val back = codec.decode(map)
+        assertTrue(back == Right(value))
       }
     )
   )

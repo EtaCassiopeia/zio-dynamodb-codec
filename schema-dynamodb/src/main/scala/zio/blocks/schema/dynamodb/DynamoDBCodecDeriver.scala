@@ -190,6 +190,11 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[A]] =
     throw new UnsupportedOperationException("Variant derivation not yet implemented")
 
+  @SuppressWarnings(Array("org.wartremover.warts.AsInstanceOf"))
+  private def newSeqBuilder[C[_], A](constructor: zio.blocks.schema.binding.SeqConstructor[C], size: Int): Any =
+    given scala.reflect.ClassTag[A] = scala.reflect.classTag[AnyRef].asInstanceOf[scala.reflect.ClassTag[A]]
+    constructor.newBuilder[A](size)
+
   override def deriveSequence[F[_, _], C[_], A](
     element: Reflect[F, A],
     typeId: TypeId[C[A]],
@@ -199,7 +204,37 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
     defaultValue: Option[C[A]],
     examples: Seq[C[A]]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[C[A]]] =
-    throw new UnsupportedOperationException("Sequence derivation not yet implemented")
+    val seqBinding = binding
+
+    instance(element.metadata.asInstanceOf[F[Any, Any]])(using hasInstance).map { elemCodecRaw =>
+      val elemCodec = elemCodecRaw.asInstanceOf[DynamoDBCodec[Any]]
+
+      DynamoDBCodec.primitive[C[A]](
+        value =>
+          val builder = new java.util.ArrayList[AttributeValue]()
+          val iter    = seqBinding.deconstructor.deconstruct[A](value)
+          while iter.hasNext do builder.add(elemCodec.encodeValue(iter.next()))
+          AttributeValue.builder().l(builder).build()
+        ,
+        av =>
+          if av.hasL then
+            val items = av.l()
+            val seqBuilder =
+              newSeqBuilder[C, A](seqBinding.constructor, items.size()).asInstanceOf[seqBinding.constructor.Builder[A]]
+            var i                  = 0
+            var error: SchemaError = null
+            while i < items.size() && error == null do
+              elemCodec.decodeValue(items.get(i)) match
+                case Right(v) =>
+                  seqBinding.constructor.add(seqBuilder, v.asInstanceOf[A])
+                case Left(e) =>
+                  error = e
+              i += 1
+            if error != null then Left(error)
+            else Right(seqBinding.constructor.result[A](seqBuilder))
+          else Left(SchemaError.expectationMismatch(Nil, "Expected L (list) attribute"))
+      )
+    }
 
   override def deriveMap[F[_, _], M[_, _], K, V](
     key: Reflect[F, K],

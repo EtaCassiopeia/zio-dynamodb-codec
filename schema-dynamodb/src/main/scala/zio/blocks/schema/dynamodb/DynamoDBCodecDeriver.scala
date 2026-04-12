@@ -246,7 +246,45 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
     defaultValue: Option[M[K, V]],
     examples: Seq[M[K, V]]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[M[K, V]]] =
-    throw new UnsupportedOperationException("Map derivation not yet implemented")
+    val mapBinding  = binding
+    val isStringKey = key.asPrimitive.exists(_.primitiveType.isInstanceOf[PrimitiveType.String])
+
+    val valueLazy = instance(value.metadata.asInstanceOf[F[Any, Any]])(using hasInstance)
+
+    valueLazy.map { valueCodecRaw =>
+      val valueCodec = valueCodecRaw.asInstanceOf[DynamoDBCodec[Any]]
+
+      if isStringKey then
+        DynamoDBCodec.primitive[M[K, V]](
+          m =>
+            val builder = new java.util.HashMap[String, AttributeValue]()
+            val iter    = mapBinding.deconstructor.deconstruct[K, V](m)
+            while iter.hasNext do
+              val entry = iter.next()
+              val k     = mapBinding.deconstructor.getKey[K, V](entry)
+              val v     = mapBinding.deconstructor.getValue[K, V](entry)
+              builder.put(k.asInstanceOf[String], valueCodec.encodeValue(v))
+            AttributeValue.builder().m(builder).build()
+          ,
+          av =>
+            if av.hasM then
+              val entries            = av.m()
+              val mapBuilder         = mapBinding.constructor.newObjectBuilder[K, V](entries.size())
+              var error: SchemaError = null
+              entries.forEach { (k, v) =>
+                if error == null then
+                  valueCodec.decodeValue(v) match
+                    case Right(decoded) =>
+                      mapBinding.constructor.addObject(mapBuilder, k.asInstanceOf[K], decoded.asInstanceOf[V])
+                    case Left(e) =>
+                      error = e
+              }
+              if error != null then Left(error)
+              else Right(mapBinding.constructor.resultObject[K, V](mapBuilder))
+            else Left(SchemaError.expectationMismatch(Nil, "Expected M (map) attribute"))
+        )
+      else throw new UnsupportedOperationException("Non-string keyed maps not yet supported")
+    }
 
   override def deriveWrapper[F[_, _], A, B](
     wrapped: Reflect[F, B],

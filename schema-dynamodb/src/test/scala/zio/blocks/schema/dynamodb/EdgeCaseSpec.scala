@@ -95,6 +95,11 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         val av    = codec.encodeValue(List.empty[String])
         assertTrue(av.hasL, av.l().size() == 0, codec.decodeValue(av) == Right(List.empty[String]))
       },
+      test("empty Map round-trip") {
+        val codec = DynamoDB.codec[Map[String, String]]
+        val av    = codec.encodeValue(Map.empty[String, String])
+        assertTrue(av.hasM, av.m().size() == 0, codec.decodeValue(av) == Right(Map.empty[String, String]))
+      },
       test("Vector[String] round-trip") {
         val codec = DynamoDB.codec[WithVectorField]
         val value = WithVectorField(Vector("a", "b", "c"))

@@ -10,6 +10,10 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   case class AllOptional(a: Option[String], b: Option[Int], c: Option[Boolean]) derives Schema
   case class WithOptionalRecord(data: Option[SimpleRec]) derives Schema
   case class WithVectorField(items: Vector[String]) derives Schema
+  case class WithEither(result: Either[String, Int]) derives Schema
+
+  enum Status derives Schema:
+    case Active, Inactive, Suspended
 
   def spec = suite("EdgeCaseSpec")(
     suite("Primitives")(
@@ -103,6 +107,31 @@ object EdgeCaseSpec extends ZIOSpecDefault:
       test("Vector[String] round-trip") {
         val codec = DynamoDB.codec[WithVectorField]
         val value = WithVectorField(Vector("a", "b", "c"))
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(value, map)
+        val back = codec.decode(map)
+        assertTrue(back == Right(value))
+      }
+    ),
+    suite("Enums")(
+      test("enum round-trip") {
+        val codec  = DynamoDB.codec[Status]
+        val values = List(Status.Active, Status.Inactive, Status.Suspended)
+        val results = values.map { v =>
+          val av = codec.encodeValue(v)
+          codec.decodeValue(av)
+        }
+        assertTrue(results == values.map(Right(_)))
+      },
+      test("unknown enum value returns error") {
+        val codec  = DynamoDB.codec[Status]
+        val av     = AttributeValue.builder().s("Unknown").build()
+        val result = codec.decodeValue(av)
+        assertTrue(result.isLeft)
+      },
+      test("Either[String, Int] Right round-trip") {
+        val codec = DynamoDB.codec[WithEither]
+        val value = WithEither(Right(42))
         val map   = new java.util.HashMap[String, AttributeValue]()
         codec.encode(value, map)
         val back = codec.decode(map)

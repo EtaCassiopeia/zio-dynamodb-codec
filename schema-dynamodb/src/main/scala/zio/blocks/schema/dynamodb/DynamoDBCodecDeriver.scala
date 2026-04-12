@@ -179,6 +179,8 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
       }
     }
 
+  private val DiscriminatorField = "_type"
+
   override def deriveVariant[F[_, _], A](
     cases: IndexedSeq[Term[F, A, ?]],
     typeId: TypeId[A],
@@ -188,7 +190,60 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
     defaultValue: Option[A],
     examples: Seq[A]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[A]] =
-    throw new UnsupportedOperationException("Variant derivation not yet implemented")
+    val variantBinding = binding
+    val caseCount      = cases.size
+    val caseNames      = new Array[String](caseCount)
+    val lazyCaseMetas  = new Array[Any](caseCount)
+    val caseNameMap    = new java.util.HashMap[String, Integer](caseCount)
+
+    var i = 0
+    while i < caseCount do
+      caseNames(i) = cases(i).name
+      lazyCaseMetas(i) = cases(i).value.metadata
+      caseNameMap.put(caseNames(i), Integer.valueOf(i))
+      i += 1
+
+    val isEnum = cases.forall(_.value.asRecord.exists(_.fields.isEmpty))
+
+    Lazy:
+      val caseCodecs = new Array[DynamoDBCodec[Any]](caseCount)
+      var ci         = 0
+      while ci < caseCount do
+        caseCodecs(ci) = resolveCodec[F](lazyCaseMetas(ci))
+        ci += 1
+
+      if isEnum then
+        DynamoDBCodec.primitive[A](
+          value =>
+            val idx = variantBinding.discriminator.discriminate(value)
+            AttributeValue.builder().s(caseNames(idx)).build()
+          ,
+          av =>
+            expectS(av).flatMap { s =>
+              val idx = caseNameMap.get(s)
+              if idx != null then
+                caseCodecs(idx.intValue())
+                  .decodeValue(AttributeValue.builder().m(java.util.Collections.emptyMap()).build())
+                  .map(_.asInstanceOf[A])
+              else Left(SchemaError.unknownCase(Nil, s))
+            }
+        )
+      else
+        DynamoDBCodec.record[A](
+          enc = (value, output) =>
+            val idx = variantBinding.discriminator.discriminate(value)
+            output.put(DiscriminatorField, AttributeValue.builder().s(caseNames(idx)).build())
+            caseCodecs(idx).encode(value, output)
+          ,
+          dec = input =>
+            val discAv = input.get(DiscriminatorField)
+            if discAv == null || discAv.s() == null then Left(SchemaError.missingField(Nil, DiscriminatorField))
+            else
+              val caseName = discAv.s()
+              val idx      = caseNameMap.get(caseName)
+              if idx != null then caseCodecs(idx.intValue()).decode(input).map(_.asInstanceOf[A])
+              else Left(SchemaError.unknownCase(Nil, caseName))
+        )
 
   @SuppressWarnings(Array("org.wartremover.warts.AsInstanceOf"))
   private def newSeqBuilder[C[_], A](constructor: zio.blocks.schema.binding.SeqConstructor[C], size: Int): Any =

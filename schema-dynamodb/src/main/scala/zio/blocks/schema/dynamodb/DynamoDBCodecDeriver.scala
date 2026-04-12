@@ -7,7 +7,7 @@ import zio.blocks.schema.binding.*
 import zio.blocks.schema.derive.*
 import zio.blocks.typeid.TypeId
 
-class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
+class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity) extends Deriver[DynamoDBCodec]:
 
   override def derivePrimitive[A](
     primitiveType: PrimitiveType[A],
@@ -105,7 +105,7 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
 
       var i = 0
       while i < fieldCount do
-        fieldNames(i) = fields(i).name
+        fieldNames(i) = fieldNameMapper(fields(i).name)
         fieldCodecs(i) = resolveCodec[F](fields(i).value.metadata)
         isOptional(i) = isOptionReflect(fields(i).value)
         if isOptional(i) then resolveOptionInnerCodec[F](fields(i), i, innerCodecs)
@@ -377,4 +377,4 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[DynamicValue]] =
     throw new UnsupportedOperationException("Dynamic derivation not yet implemented")
 
-object DynamoDBCodecDeriver extends DynamoDBCodecDeriver
+object DynamoDBCodecDeriver extends DynamoDBCodecDeriver(NameMapper.identity)

@@ -15,6 +15,21 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   enum Status derives Schema:
     case Active, Inactive, Suspended
 
+  case class ValidatedId(value: String)
+  object ValidatedId:
+    given Schema[ValidatedId] = NewtypeSchema.validated[ValidatedId, String](
+      s => if s.nonEmpty then Right(ValidatedId(s)) else Left("ID must not be empty"),
+      _.value
+    )
+
+  case class InnerNewtype(value: String)
+  object InnerNewtype:
+    given Schema[InnerNewtype] = NewtypeSchema[InnerNewtype, String](InnerNewtype(_), _.value)
+
+  case class OuterNewtype(inner: InnerNewtype)
+  object OuterNewtype:
+    given Schema[OuterNewtype] = NewtypeSchema[OuterNewtype, InnerNewtype](OuterNewtype(_), _.inner)
+
   def spec = suite("EdgeCaseSpec")(
     suite("Primitives")(
       test("String round-trip") {
@@ -136,6 +151,29 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         codec.encode(value, map)
         val back = codec.decode(map)
         assertTrue(back == Right(value))
+      }
+    ),
+    suite("Wrappers")(
+      test("validated newtype with valid value") {
+        val codec = DynamoDB.codec[ValidatedId]
+        val av    = codec.encodeValue(ValidatedId("abc"))
+        val back  = codec.decodeValue(av)
+        assertTrue(av.s() == "abc", back == Right(ValidatedId("abc")))
+      },
+      test("validated newtype with invalid value returns error") {
+        val codec = DynamoDB.codec[ValidatedId]
+        val av    = AttributeValue.builder().s("").build()
+        val back =
+          try codec.decodeValue(av)
+          catch case e: SchemaError => Left(e)
+        assertTrue(back.isLeft)
+      },
+      test("nested newtypes round-trip") {
+        val codec = DynamoDB.codec[OuterNewtype]
+        val value = OuterNewtype(InnerNewtype("hello"))
+        val av    = codec.encodeValue(value)
+        val back  = codec.decodeValue(av)
+        assertTrue(av.s() == "hello", back == Right(value))
       }
     )
   )

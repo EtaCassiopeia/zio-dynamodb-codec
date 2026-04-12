@@ -350,7 +350,23 @@ class DynamoDBCodecDeriver extends Deriver[DynamoDBCodec]:
     defaultValue: Option[A],
     examples: Seq[A]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[A]] =
-    throw new UnsupportedOperationException("Wrapper derivation not yet implemented")
+    val wrapperBinding = binding
+
+    instance(wrapped.metadata.asInstanceOf[F[Any, Any]])(using hasInstance).map { innerCodecRaw =>
+      val innerCodec = innerCodecRaw.asInstanceOf[DynamoDBCodec[Any]]
+      new DynamoDBCodec[A]:
+        def encode(value: A, output: java.util.Map[String, AttributeValue]): Unit =
+          innerCodec.encode(wrapperBinding.unwrap(value), output)
+
+        def decode(input: java.util.Map[String, AttributeValue]): Either[SchemaError, A] =
+          innerCodec.decode(input).map(b => wrapperBinding.wrap(b.asInstanceOf[B]))
+
+        def encodeValue(value: A): AttributeValue =
+          innerCodec.encodeValue(wrapperBinding.unwrap(value))
+
+        def decodeValue(av: AttributeValue): Either[SchemaError, A] =
+          innerCodec.decodeValue(av).map(b => wrapperBinding.wrap(b.asInstanceOf[B]))
+    }
 
   override def deriveDynamic[F[_, _]](
     binding: Binding.Dynamic,

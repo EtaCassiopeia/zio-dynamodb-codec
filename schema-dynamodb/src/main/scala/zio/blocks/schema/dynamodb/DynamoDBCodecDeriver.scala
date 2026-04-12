@@ -105,7 +105,9 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
 
       var i = 0
       while i < fieldCount do
-        fieldNames(i) = fieldNameMapper(fields(i).name)
+        fieldNames(i) = fields(i).modifiers
+          .collectFirst { case m: Modifier.rename => m.name }
+          .getOrElse(fieldNameMapper(fields(i).name))
         fieldCodecs(i) = resolveCodec[F](fields(i).value.metadata)
         isOptional(i) = isOptionReflect(fields(i).value)
         if isOptional(i) then resolveOptionInnerCodec[F](fields(i), i, innerCodecs)
@@ -198,7 +200,9 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
 
     var i = 0
     while i < caseCount do
-      caseNames(i) = cases(i).name
+      caseNames(i) = cases(i).modifiers
+        .collectFirst { case m: Modifier.rename => m.name }
+        .getOrElse(cases(i).name)
       lazyCaseMetas(i) = cases(i).value.metadata
       caseNameMap.put(caseNames(i), Integer.valueOf(i))
       i += 1

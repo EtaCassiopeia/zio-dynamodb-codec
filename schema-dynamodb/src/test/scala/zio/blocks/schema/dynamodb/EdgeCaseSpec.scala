@@ -4,7 +4,8 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue
 import zio.blocks.schema.*
 import zio.test.*
 
-import java.util.UUID
+import java.time.*
+import java.util.{Currency, UUID}
 
 object EdgeCaseSpec extends ZIOSpecDefault:
 
@@ -101,6 +102,42 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         val u     = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
         val av    = codec.encodeValue(u)
         assertTrue(codec.decodeValue(av) == Right(u))
+      },
+      test("LocalDate round-trip") {
+        val codec = DynamoDB.codec[LocalDate]
+        val d     = LocalDate.of(2025, 4, 17)
+        val av    = codec.encodeValue(d)
+        assertTrue(av.s() == "2025-04-17", codec.decodeValue(av) == Right(d))
+      },
+      test("Duration round-trip") {
+        val codec = DynamoDB.codec[Duration]
+        val dur   = Duration.ofHours(2).plusMinutes(30)
+        val av    = codec.encodeValue(dur)
+        assertTrue(codec.decodeValue(av) == Right(dur))
+      },
+      test("Month round-trip") {
+        val codec = DynamoDB.codec[Month]
+        val m     = Month.APRIL
+        val av    = codec.encodeValue(m)
+        assertTrue(av.s() == "APRIL", codec.decodeValue(av) == Right(m))
+      },
+      test("DayOfWeek round-trip") {
+        val codec = DynamoDB.codec[DayOfWeek]
+        val d     = DayOfWeek.THURSDAY
+        val av    = codec.encodeValue(d)
+        assertTrue(av.s() == "THURSDAY", codec.decodeValue(av) == Right(d))
+      },
+      test("ZoneId round-trip") {
+        val codec = DynamoDB.codec[ZoneId]
+        val z     = ZoneId.of("America/New_York")
+        val av    = codec.encodeValue(z)
+        assertTrue(av.s() == "America/New_York", codec.decodeValue(av) == Right(z))
+      },
+      test("Currency round-trip") {
+        val codec = DynamoDB.codec[Currency]
+        val c     = Currency.getInstance("USD")
+        val av    = codec.encodeValue(c)
+        assertTrue(av.s() == "USD", codec.decodeValue(av) == Right(c))
       }
     ),
     suite("Records")(

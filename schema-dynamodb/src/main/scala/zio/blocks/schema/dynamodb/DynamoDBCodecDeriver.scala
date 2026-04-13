@@ -7,6 +7,7 @@ import zio.blocks.schema.binding.*
 import zio.blocks.schema.derive.*
 import zio.blocks.typeid.TypeId
 
+import java.time.*
 import java.util.UUID
 
 class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity) extends Deriver[DynamoDBCodec]:
@@ -37,7 +38,44 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
       case _: PrimitiveType.BigDecimal => numCodec[scala.math.BigDecimal](_.toString, s => scala.math.BigDecimal(s))
       case _: PrimitiveType.Char       => charCodec
       case PrimitiveType.Unit          => unitCodec
-      case _: PrimitiveType.UUID       => uuidCodec
+      case _: PrimitiveType.UUID           => uuidCodec
+      case _: PrimitiveType.Instant        => temporalCodec[Instant](_.toString, Instant.parse)
+      case _: PrimitiveType.LocalDate      => temporalCodec[LocalDate](_.toString, LocalDate.parse)
+      case _: PrimitiveType.LocalDateTime  => temporalCodec[LocalDateTime](_.toString, LocalDateTime.parse)
+      case _: PrimitiveType.LocalTime      => temporalCodec[LocalTime](_.toString, LocalTime.parse)
+      case _: PrimitiveType.OffsetDateTime => temporalCodec[OffsetDateTime](_.toString, OffsetDateTime.parse)
+      case _: PrimitiveType.OffsetTime     => temporalCodec[OffsetTime](_.toString, OffsetTime.parse)
+      case _: PrimitiveType.ZonedDateTime  => temporalCodec[ZonedDateTime](_.toString, ZonedDateTime.parse)
+      case _: PrimitiveType.Duration       => temporalCodec[Duration](_.toString, Duration.parse)
+      case _: PrimitiveType.Period         => temporalCodec[Period](_.toString, Period.parse)
+      case _: PrimitiveType.Year           => temporalCodec[Year](_.toString, Year.parse)
+      case _: PrimitiveType.YearMonth      => temporalCodec[YearMonth](_.toString, YearMonth.parse)
+      case _: PrimitiveType.MonthDay       => temporalCodec[MonthDay](_.toString, MonthDay.parse)
+      case _: PrimitiveType.Month =>
+        DynamoDBCodec.primitive[Month](
+          a => AttributeValue.builder().s(a.name()).build(),
+          av => expectS(av).flatMap(s => tryParse(s, Month.valueOf))
+        )
+      case _: PrimitiveType.DayOfWeek =>
+        DynamoDBCodec.primitive[DayOfWeek](
+          a => AttributeValue.builder().s(a.name()).build(),
+          av => expectS(av).flatMap(s => tryParse(s, DayOfWeek.valueOf))
+        )
+      case _: PrimitiveType.ZoneId =>
+        DynamoDBCodec.primitive[ZoneId](
+          a => AttributeValue.builder().s(a.getId).build(),
+          av => expectS(av).flatMap(s => tryParse(s, ZoneId.of))
+        )
+      case _: PrimitiveType.ZoneOffset =>
+        DynamoDBCodec.primitive[ZoneOffset](
+          a => AttributeValue.builder().s(a.getId).build(),
+          av => expectS(av).flatMap(s => tryParse(s, ZoneOffset.of))
+        )
+      case _: PrimitiveType.Currency =>
+        DynamoDBCodec.primitive[java.util.Currency](
+          a => AttributeValue.builder().s(a.getCurrencyCode).build(),
+          av => expectS(av).flatMap(s => tryParse(s, java.util.Currency.getInstance))
+        )
       case _ => throw new UnsupportedOperationException(s"Unsupported primitive type: $pt")
     ).asInstanceOf[DynamoDBCodec[A]]
 
@@ -71,6 +109,12 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     a => AttributeValue.builder().s(a.toString).build(),
     av => expectS(av).flatMap(s => tryParse(s, UUID.fromString))
   )
+
+  private def temporalCodec[A](enc: A => String, dec: String => A): DynamoDBCodec[A] =
+    DynamoDBCodec.primitive[A](
+      a => AttributeValue.builder().s(enc(a)).build(),
+      av => expectS(av).flatMap(s => tryParse(s, dec))
+    )
 
   private def numCodec[A](enc: A => String, dec: String => A): DynamoDBCodec[A] =
     DynamoDBCodec.primitive[A](

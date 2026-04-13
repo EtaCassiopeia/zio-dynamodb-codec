@@ -4,6 +4,8 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue
 import zio.blocks.schema.*
 import zio.test.*
 
+import java.util.UUID
+
 object EdgeCaseSpec extends ZIOSpecDefault:
 
   case class SimpleRec(x: String, y: Int) derives Schema
@@ -56,6 +58,49 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         val codec = DynamoDB.codec[Boolean]
         val av    = codec.encodeValue(true)
         assertTrue(av.bool() == true, codec.decodeValue(av) == Right(true))
+      },
+      test("Byte round-trip") {
+        val codec = DynamoDB.codec[Byte]
+        val av    = codec.encodeValue(42.toByte)
+        assertTrue(av.n() == "42", codec.decodeValue(av) == Right(42.toByte))
+      },
+      test("Short round-trip") {
+        val codec = DynamoDB.codec[Short]
+        val av    = codec.encodeValue(1000.toShort)
+        assertTrue(av.n() == "1000", codec.decodeValue(av) == Right(1000.toShort))
+      },
+      test("Float round-trip") {
+        val codec = DynamoDB.codec[Float]
+        val av    = codec.encodeValue(3.14f)
+        assertTrue(av.n() == "3.14", codec.decodeValue(av) == Right(3.14f))
+      },
+      test("BigInt round-trip") {
+        val codec = DynamoDB.codec[BigInt]
+        val big   = BigInt("123456789012345678901234567890")
+        val av    = codec.encodeValue(big)
+        assertTrue(av.n() == "123456789012345678901234567890", codec.decodeValue(av) == Right(big))
+      },
+      test("BigDecimal round-trip") {
+        val codec = DynamoDB.codec[BigDecimal]
+        val big   = BigDecimal("123456789.012345678901234567890")
+        val av    = codec.encodeValue(big)
+        assertTrue(codec.decodeValue(av) == Right(big))
+      },
+      test("Char round-trip") {
+        val codec = DynamoDB.codec[Char]
+        val av    = codec.encodeValue('Z')
+        assertTrue(av.s() == "Z", codec.decodeValue(av) == Right('Z'))
+      },
+      test("Unit round-trip") {
+        val codec = DynamoDB.codec[Unit]
+        val av    = codec.encodeValue(())
+        assertTrue(av.nul(), codec.decodeValue(av) == Right(()))
+      },
+      test("UUID round-trip") {
+        val codec = DynamoDB.codec[UUID]
+        val u     = UUID.fromString("550e8400-e29b-41d4-a716-446655440000")
+        val av    = codec.encodeValue(u)
+        assertTrue(codec.decodeValue(av) == Right(u))
       }
     ),
     suite("Records")(

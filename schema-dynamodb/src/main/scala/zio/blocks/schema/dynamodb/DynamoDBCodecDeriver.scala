@@ -7,6 +7,8 @@ import zio.blocks.schema.binding.*
 import zio.blocks.schema.derive.*
 import zio.blocks.typeid.TypeId
 
+import java.util.UUID
+
 class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity) extends Deriver[DynamoDBCodec]:
 
   override def derivePrimitive[A](
@@ -23,11 +25,19 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
   @SuppressWarnings(Array("org.wartremover.warts.AsInstanceOf"))
   private def primitiveCodec[A](pt: PrimitiveType[A]): DynamoDBCodec[A] =
     (pt match
-      case _: PrimitiveType.String  => stringCodec
-      case _: PrimitiveType.Boolean => booleanCodec
-      case _: PrimitiveType.Int     => numCodec[Int](_.toString, _.toInt)
-      case _: PrimitiveType.Long    => numCodec[Long](_.toString, _.toLong)
-      case _: PrimitiveType.Double  => numCodec[Double](_.toString, _.toDouble)
+      case _: PrimitiveType.String     => stringCodec
+      case _: PrimitiveType.Boolean    => booleanCodec
+      case _: PrimitiveType.Byte       => numCodec[Byte](_.toString, _.toByte)
+      case _: PrimitiveType.Short      => numCodec[Short](_.toString, _.toShort)
+      case _: PrimitiveType.Int        => numCodec[Int](_.toString, _.toInt)
+      case _: PrimitiveType.Long       => numCodec[Long](_.toString, _.toLong)
+      case _: PrimitiveType.Float      => numCodec[Float](_.toString, _.toFloat)
+      case _: PrimitiveType.Double     => numCodec[Double](_.toString, _.toDouble)
+      case _: PrimitiveType.BigInt     => numCodec[scala.math.BigInt](_.toString, s => scala.math.BigInt(s))
+      case _: PrimitiveType.BigDecimal => numCodec[scala.math.BigDecimal](_.toString, s => scala.math.BigDecimal(s))
+      case _: PrimitiveType.Char       => charCodec
+      case PrimitiveType.Unit          => unitCodec
+      case _: PrimitiveType.UUID       => uuidCodec
       case _ => throw new UnsupportedOperationException(s"Unsupported primitive type: $pt")
     ).asInstanceOf[DynamoDBCodec[A]]
 
@@ -41,6 +51,25 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     av =>
       if av.bool() != null then Right(av.bool().booleanValue())
       else Left(SchemaError.expectationMismatch(Nil, "Expected BOOL attribute"))
+  )
+
+  private val charCodec: DynamoDBCodec[Char] = DynamoDBCodec.primitive[Char](
+    a => AttributeValue.builder().s(a.toString).build(),
+    av =>
+      expectS(av).flatMap(s =>
+        if s.length == 1 then Right(s.charAt(0))
+        else Left(SchemaError.expectationMismatch(Nil, "Expected single-char S attribute"))
+      )
+  )
+
+  private val unitCodec: DynamoDBCodec[Unit] = DynamoDBCodec.primitive[Unit](
+    _ => AttributeValue.builder().nul(true).build(),
+    _ => Right(())
+  )
+
+  private val uuidCodec: DynamoDBCodec[UUID] = DynamoDBCodec.primitive[UUID](
+    a => AttributeValue.builder().s(a.toString).build(),
+    av => expectS(av).flatMap(s => tryParse(s, UUID.fromString))
   )
 
   private def numCodec[A](enc: A => String, dec: String => A): DynamoDBCodec[A] =

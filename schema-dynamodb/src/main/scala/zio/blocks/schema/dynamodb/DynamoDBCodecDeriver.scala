@@ -336,37 +336,95 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     defaultValue: Option[C[A]],
     examples: Seq[C[A]]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[C[A]]] =
-    val seqBinding = binding
+    val seqBinding       = binding
+    val isSet            = typeId.name == "Set"
+    val isStringElement  = element.asPrimitive.exists(_.primitiveType.isInstanceOf[PrimitiveType.String])
+    val isNumericElement = element.asPrimitive.exists(p => isNumericPrimitive(p.primitiveType))
 
     instance(element.metadata.asInstanceOf[F[Any, Any]])(using hasInstance).map { elemCodecRaw =>
       val elemCodec = elemCodecRaw.asInstanceOf[DynamoDBCodec[Any]]
 
-      DynamoDBCodec.primitive[C[A]](
-        value =>
-          val builder = new java.util.ArrayList[AttributeValue]()
-          val iter    = seqBinding.deconstructor.deconstruct[A](value)
-          while iter.hasNext do builder.add(elemCodec.encodeValue(iter.next()))
-          AttributeValue.builder().l(builder).build()
-        ,
-        av =>
-          if av.hasL then
-            val items = av.l()
-            val seqBuilder =
-              newSeqBuilder[C, A](seqBinding.constructor, items.size()).asInstanceOf[seqBinding.constructor.Builder[A]]
-            var i                  = 0
-            var error: SchemaError = null
-            while i < items.size() && error == null do
-              elemCodec.decodeValue(items.get(i)) match
-                case Right(v) =>
-                  seqBinding.constructor.add(seqBuilder, v.asInstanceOf[A])
-                case Left(e) =>
-                  error = e
-              i += 1
-            if error != null then Left(error)
-            else Right(seqBinding.constructor.result[A](seqBuilder))
-          else Left(SchemaError.expectationMismatch(Nil, "Expected L (list) attribute"))
-      )
+      if isSet && isStringElement then
+        DynamoDBCodec.primitive[C[A]](
+          value =>
+            val items = new java.util.ArrayList[String]()
+            val iter  = seqBinding.deconstructor.deconstruct[A](value)
+            while iter.hasNext do items.add(iter.next().toString)
+            if items.isEmpty then
+              throw SchemaError.expectationMismatch(Nil, "DynamoDB does not support empty sets (SS)")
+            AttributeValue.builder().ss(items).build()
+          ,
+          av =>
+            if av.hasSs then
+              val seqBuilder = newSeqBuilder[C, A](seqBinding.constructor, av.ss().size())
+                .asInstanceOf[seqBinding.constructor.Builder[A]]
+              av.ss().forEach(s => seqBinding.constructor.add(seqBuilder, s.asInstanceOf[A]))
+              Right(seqBinding.constructor.result(seqBuilder))
+            else if av.hasL then decodeAsList(av, elemCodec, seqBinding)
+            else Left(SchemaError.expectationMismatch(Nil, "Expected SS (string set) or L attribute"))
+        )
+      else if isSet && isNumericElement then
+        DynamoDBCodec.primitive[C[A]](
+          value =>
+            val items = new java.util.ArrayList[String]()
+            val iter  = seqBinding.deconstructor.deconstruct[A](value)
+            while iter.hasNext do items.add(iter.next().toString)
+            if items.isEmpty then
+              throw SchemaError.expectationMismatch(Nil, "DynamoDB does not support empty sets (NS)")
+            AttributeValue.builder().ns(items).build()
+          ,
+          av =>
+            if av.hasNs then
+              val seqBuilder = newSeqBuilder[C, A](seqBinding.constructor, av.ns().size())
+                .asInstanceOf[seqBinding.constructor.Builder[A]]
+              av.ns().forEach { nStr =>
+                val decoded = elemCodec.decodeValue(AttributeValue.builder().n(nStr).build())
+                decoded.foreach(v => seqBinding.constructor.add(seqBuilder, v.asInstanceOf[A]))
+              }
+              Right(seqBinding.constructor.result[A](seqBuilder))
+            else if av.hasL then decodeAsList(av, elemCodec, seqBinding)
+            else Left(SchemaError.expectationMismatch(Nil, "Expected NS (number set) or L attribute"))
+        )
+      else
+        DynamoDBCodec.primitive[C[A]](
+          value =>
+            val builder = new java.util.ArrayList[AttributeValue]()
+            val iter    = seqBinding.deconstructor.deconstruct[A](value)
+            while iter.hasNext do builder.add(elemCodec.encodeValue(iter.next()))
+            AttributeValue.builder().l(builder).build()
+          ,
+          av => decodeAsList(av, elemCodec, seqBinding)
+        )
     }
+
+  private def decodeAsList[C[_], A](
+    av: AttributeValue,
+    elemCodec: DynamoDBCodec[Any],
+    seqBinding: Binding.Seq[C, A]
+  ): Either[SchemaError, C[A]] =
+    if av.hasL then
+      val items = av.l()
+      val seqBuilder =
+        newSeqBuilder[C, A](seqBinding.constructor, items.size()).asInstanceOf[seqBinding.constructor.Builder[A]]
+      var i                  = 0
+      var error: SchemaError = null
+      while i < items.size() && error == null do
+        elemCodec.decodeValue(items.get(i)) match
+          case Right(v) =>
+            seqBinding.constructor.add(seqBuilder, v.asInstanceOf[A])
+          case Left(e) =>
+            error = e
+        i += 1
+      if error != null then Left(error)
+      else Right(seqBinding.constructor.result[A](seqBuilder))
+    else Left(SchemaError.expectationMismatch(Nil, "Expected L (list) attribute"))
+
+  private def isNumericPrimitive(pt: PrimitiveType[?]): Boolean =
+    pt match
+      case _: PrimitiveType.Byte | _: PrimitiveType.Short | _: PrimitiveType.Int | _: PrimitiveType.Long |
+          _: PrimitiveType.Float | _: PrimitiveType.Double | _: PrimitiveType.BigInt | _: PrimitiveType.BigDecimal =>
+        true
+      case _ => false
 
   override def deriveMap[F[_, _], M[_, _], K, V](
     key: Reflect[F, K],

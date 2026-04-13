@@ -208,6 +208,15 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         codec.encode(value, map)
         val back = codec.decode(map)
         assertTrue(back == Right(value))
+      },
+      test("empty Set[String] fails on encode") {
+        val codec = DynamoDB.codec[Set[String]]
+        val result =
+          try
+            codec.encodeValue(Set.empty[String])
+            false
+          catch case _: SchemaError => true
+        assertTrue(result)
       }
     ),
     suite("Enums")(

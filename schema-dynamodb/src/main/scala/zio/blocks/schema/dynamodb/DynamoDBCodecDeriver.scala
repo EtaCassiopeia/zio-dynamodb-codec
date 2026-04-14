@@ -1,5 +1,6 @@
 package zio.blocks.schema.dynamodb
 
+import software.amazon.awssdk.core.SdkBytes
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue
 import zio.blocks.docs.Doc
 import zio.blocks.schema.*
@@ -336,6 +337,22 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     defaultValue: Option[C[A]],
     examples: Seq[C[A]]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[C[A]]] =
+    // Special case: Array[Byte] → DynamoDB B (binary) attribute
+    val isByteArray = element.asPrimitive.exists(_.primitiveType.isInstanceOf[PrimitiveType.Byte]) &&
+      typeId.name == "Array"
+
+    if isByteArray then
+      return Lazy:
+        DynamoDBCodec.primitive[C[A]](
+          value =>
+            val bytes = value.asInstanceOf[Array[Byte]]
+            AttributeValue.builder().b(SdkBytes.fromByteArray(bytes)).build()
+          ,
+          av =>
+            if av.b() != null then Right(av.b().asByteArray().asInstanceOf[C[A]])
+            else Left(SchemaError.expectationMismatch(Nil, "Expected B (binary) attribute"))
+        )
+
     val seqBinding       = binding
     val isSet            = typeId.name == "Set"
     val isStringElement  = element.asPrimitive.exists(_.primitiveType.isInstanceOf[PrimitiveType.String])

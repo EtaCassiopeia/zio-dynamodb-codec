@@ -456,41 +456,82 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     val mapBinding  = binding
     val isStringKey = key.asPrimitive.exists(_.primitiveType.isInstanceOf[PrimitiveType.String])
 
+    val keyLazy   = instance(key.metadata.asInstanceOf[F[Any, Any]])(using hasInstance)
     val valueLazy = instance(value.metadata.asInstanceOf[F[Any, Any]])(using hasInstance)
 
-    valueLazy.map { valueCodecRaw =>
-      val valueCodec = valueCodecRaw.asInstanceOf[DynamoDBCodec[Any]]
+    keyLazy.flatMap { keyCodecRaw =>
+      valueLazy.map { valueCodecRaw =>
+        val keyCodec   = keyCodecRaw.asInstanceOf[DynamoDBCodec[Any]]
+        val valueCodec = valueCodecRaw.asInstanceOf[DynamoDBCodec[Any]]
 
-      if isStringKey then
-        DynamoDBCodec.primitive[M[K, V]](
-          m =>
-            val builder = new java.util.HashMap[String, AttributeValue]()
-            val iter    = mapBinding.deconstructor.deconstruct[K, V](m)
-            while iter.hasNext do
-              val entry = iter.next()
-              val k     = mapBinding.deconstructor.getKey[K, V](entry)
-              val v     = mapBinding.deconstructor.getValue[K, V](entry)
-              builder.put(k.asInstanceOf[String], valueCodec.encodeValue(v))
-            AttributeValue.builder().m(builder).build()
-          ,
-          av =>
-            if av.hasM then
-              val entries            = av.m()
-              val mapBuilder         = mapBinding.constructor.newObjectBuilder[K, V](entries.size())
-              var error: SchemaError = null
-              entries.forEach { (k, v) =>
-                if error == null then
-                  valueCodec.decodeValue(v) match
-                    case Right(decoded) =>
-                      mapBinding.constructor.addObject(mapBuilder, k.asInstanceOf[K], decoded.asInstanceOf[V])
-                    case Left(e) =>
-                      error = e
-              }
-              if error != null then Left(error)
-              else Right(mapBinding.constructor.resultObject[K, V](mapBuilder))
-            else Left(SchemaError.expectationMismatch(Nil, "Expected M (map) attribute"))
-        )
-      else throw new UnsupportedOperationException("Non-string keyed maps not yet supported")
+        if isStringKey then
+          DynamoDBCodec.primitive[M[K, V]](
+            m =>
+              val builder = new java.util.HashMap[String, AttributeValue]()
+              val iter    = mapBinding.deconstructor.deconstruct[K, V](m)
+              while iter.hasNext do
+                val entry = iter.next()
+                val k     = mapBinding.deconstructor.getKey[K, V](entry)
+                val v     = mapBinding.deconstructor.getValue[K, V](entry)
+                builder.put(k.asInstanceOf[String], valueCodec.encodeValue(v))
+              AttributeValue.builder().m(builder).build()
+            ,
+            av =>
+              if av.hasM then
+                val entries            = av.m()
+                val mapBuilder         = mapBinding.constructor.newObjectBuilder[K, V](entries.size())
+                var error: SchemaError = null
+                entries.forEach { (k, v) =>
+                  if error == null then
+                    valueCodec.decodeValue(v) match
+                      case Right(decoded) =>
+                        mapBinding.constructor.addObject(mapBuilder, k.asInstanceOf[K], decoded.asInstanceOf[V])
+                      case Left(e) =>
+                        error = e
+                }
+                if error != null then Left(error)
+                else Right(mapBinding.constructor.resultObject[K, V](mapBuilder))
+              else Left(SchemaError.expectationMismatch(Nil, "Expected M (map) attribute"))
+          )
+        else
+          DynamoDBCodec.primitive[M[K, V]](
+            m =>
+              val builder = new java.util.ArrayList[AttributeValue]()
+              val iter    = mapBinding.deconstructor.deconstruct[K, V](m)
+              while iter.hasNext do
+                val entry = iter.next()
+                val k     = mapBinding.deconstructor.getKey[K, V](entry)
+                val v     = mapBinding.deconstructor.getValue[K, V](entry)
+                val pair  = new java.util.HashMap[String, AttributeValue](2)
+                pair.put("k", keyCodec.encodeValue(k))
+                pair.put("v", valueCodec.encodeValue(v))
+                builder.add(AttributeValue.builder().m(pair).build())
+              AttributeValue.builder().l(builder).build()
+            ,
+            av =>
+              if av.hasL then
+                val items              = av.l()
+                val mapBuilder         = mapBinding.constructor.newObjectBuilder[K, V](items.size())
+                var i                  = 0
+                var error: SchemaError = null
+                while i < items.size() && error == null do
+                  val entry = items.get(i)
+                  if entry.hasM then
+                    val entryMap = entry.m()
+                    val kd       = keyCodec.decodeValue(entryMap.get("k"))
+                    val vd       = valueCodec.decodeValue(entryMap.get("v"))
+                    (kd, vd) match
+                      case (Right(k), Right(v)) =>
+                        mapBinding.constructor.addObject(mapBuilder, k.asInstanceOf[K], v.asInstanceOf[V])
+                      case (Left(e), _) => error = e
+                      case (_, Left(e)) => error = e
+                  else error = SchemaError.expectationMismatch(Nil, s"Expected M attribute at index $i")
+                  i += 1
+                if error != null then Left(error)
+                else Right(mapBinding.constructor.resultObject[K, V](mapBuilder))
+              else Left(SchemaError.expectationMismatch(Nil, "Expected L (list) attribute for non-string-keyed map"))
+          )
+      }
     }
 
   override def deriveWrapper[F[_, _], A, B](

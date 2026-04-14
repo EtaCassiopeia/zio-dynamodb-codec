@@ -13,6 +13,7 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   case class AllOptional(a: Option[String], b: Option[Int], c: Option[Boolean]) derives Schema
   case class WithOptionalRecord(data: Option[SimpleRec]) derives Schema
   case class WithVectorField(items: Vector[String]) derives Schema
+  case class WithNonStringMap(data: Map[Int, String]) derives Schema
   case class WithEither(result: Either[String, Int]) derives Schema
 
   enum Status derives Schema:
@@ -208,6 +209,14 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         codec.encode(value, map)
         val back = codec.decode(map)
         assertTrue(back == Right(value))
+      },
+      test("Map[Int, String] (non-string keys) round-trip") {
+        val codec = DynamoDB.codec[WithNonStringMap]
+        val value = WithNonStringMap(Map(1 -> "one", 2 -> "two"))
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(value, map)
+        val back = codec.decode(map)
+        assertTrue(map.get("data").hasL, back == Right(value))
       },
       test("empty Set[String] fails on encode") {
         val codec = DynamoDB.codec[Set[String]]

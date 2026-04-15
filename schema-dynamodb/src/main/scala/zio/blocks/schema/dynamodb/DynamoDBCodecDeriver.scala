@@ -139,6 +139,31 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
       case e: Exception =>
         Left(SchemaError.expectationMismatch(Nil, s"Failed to parse '$s': ${e.getMessage}"))
 
+  private class FieldInfo(
+    val name: String,
+    val register: Register[?],
+    val idx: Int,
+    val isOptional: Boolean,
+    val isTransient: Boolean
+  ):
+    var codec: DynamoDBCodec[Any]      = null
+    var innerCodec: DynamoDBCodec[Any] = null
+
+    def setCodec(c: DynamoDBCodec[?]): Unit =
+      codec = c.asInstanceOf[DynamoDBCodec[Any]]
+
+    def setInnerCodec(c: DynamoDBCodec[?]): Unit =
+      innerCodec = c.asInstanceOf[DynamoDBCodec[Any]]
+
+    def getFieldValue(regs: Registers): Any =
+      register.asInstanceOf[Register[Any]].get(regs, 0)
+
+    def setFieldValue(regs: Registers, value: Any): Unit =
+      register.asInstanceOf[Register[Any]].set(regs, 0, value)
+
+    def effectiveCodec: DynamoDBCodec[Any] =
+      if innerCodec != null then innerCodec else codec
+
   @SuppressWarnings(Array("org.wartremover.warts.AsInstanceOf"))
   private def resolveCodec[F[_, _]](meta: Any)(using hi: HasInstance[F]): DynamoDBCodec[Any] =
     instance(meta.asInstanceOf[F[Any, Any]])(using hi).force.asInstanceOf[DynamoDBCodec[Any]]
@@ -172,20 +197,32 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     val fieldRegisters = bindingRecord.registers
 
     Lazy {
-      val fieldNames    = new Array[String](fieldCount)
-      val fieldCodecs   = new Array[DynamoDBCodec[Any]](fieldCount)
-      val isOptional    = new Array[Boolean](fieldCount)
-      val innerCodecs   = new Array[DynamoDBCodec[Any]](fieldCount) // for Option inner values
+      val infos = new Array[FieldInfo](fieldCount)
 
       var i = 0
       while i < fieldCount do
-        fieldNames(i) = fields(i).modifiers
+        val field = fields(i)
+        val name = field.modifiers
           .collectFirst { case m: Modifier.rename => m.name }
-          .getOrElse(fieldNameMapper(fields(i).name))
-        fieldCodecs(i) = resolveCodec[F](fields(i).value.metadata)
-        isOptional(i) = isOptionReflect(fields(i).value)
-        if isOptional(i) then resolveOptionInnerCodec[F](fields(i), i, innerCodecs)
+          .getOrElse(fieldNameMapper(field.name))
+        val isOpt       = isOptionReflect(field.value)
+        val isTransient = field.modifiers.exists(_.isInstanceOf[Modifier.transient])
+
+        infos(i) = new FieldInfo(
+          name = name,
+          register = fieldRegisters(i),
+          idx = i,
+          isOptional = isOpt,
+          isTransient = isTransient
+        )
         i += 1
+
+      // Resolve codecs
+      var j = 0
+      while j < fieldCount do
+        infos(j).setCodec(resolveCodec[F](fields(j).value.metadata))
+        if infos(j).isOptional then resolveOptionInnerCodec[F](fields(j), infos(j))
+        j += 1
 
       DynamoDBCodec.record[A](
         enc = (value, output) =>
@@ -194,17 +231,16 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
 
           var idx = 0
           while idx < fieldCount do
-            val fieldVal = fieldRegisters(idx).asInstanceOf[Register[Any]].get(regs, 0)
+            val fi = infos(idx)
+            if !fi.isTransient then
+              val fieldVal = fi.getFieldValue(regs)
 
-            if isOptional(idx) then
-              fieldVal match
-                case None    => () // omit None
-                case Some(v) =>
-                  val ec = if innerCodecs(idx) != null then innerCodecs(idx) else fieldCodecs(idx)
-                  output.put(fieldNames(idx), ec.encodeValue(v))
-                case _ =>
-                  output.put(fieldNames(idx), fieldCodecs(idx).encodeValue(fieldVal))
-            else output.put(fieldNames(idx), fieldCodecs(idx).encodeValue(fieldVal))
+              if fi.isOptional then
+                fieldVal match
+                  case None    => ()
+                  case Some(v) => output.put(fi.name, fi.effectiveCodec.encodeValue(v))
+                  case _       => output.put(fi.name, fi.codec.encodeValue(fieldVal))
+              else output.put(fi.name, fi.codec.encodeValue(fieldVal))
             idx += 1
         ,
         dec = input =>
@@ -213,23 +249,22 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
           var error: SchemaError = null
 
           while idx < fieldCount && error == null do
-            val raw = input.get(fieldNames(idx))
-
-            if raw == null || (raw.nul() != null && raw.nul().booleanValue()) then
-              if isOptional(idx) then
-                fieldRegisters(idx).asInstanceOf[Register[Any]].set(regs, 0, None)
-              else error = SchemaError.missingField(Nil, fieldNames(idx))
-            else if isOptional(idx) then
-              val ec = if innerCodecs(idx) != null then innerCodecs(idx) else fieldCodecs(idx)
-              ec.decodeValue(raw) match
-                case Right(v) =>
-                  fieldRegisters(idx).asInstanceOf[Register[Any]].set(regs, 0, Some(v))
-                case Left(e) => error = e
+            val fi = infos(idx)
+            if fi.isTransient then () // skip
             else
-              fieldCodecs(idx).decodeValue(raw) match
-                case Right(v) =>
-                  fieldRegisters(idx).asInstanceOf[Register[Any]].set(regs, 0, v)
-                case Left(e) => error = e
+              val raw = input.get(fi.name)
+
+              if raw == null || (raw.nul() != null && raw.nul().booleanValue()) then
+                if fi.isOptional then fi.setFieldValue(regs, None)
+                else error = SchemaError.missingField(Nil, fi.name)
+              else if fi.isOptional then
+                fi.effectiveCodec.decodeValue(raw) match
+                  case Right(v) => fi.setFieldValue(regs, Some(v))
+                  case Left(e)  => error = e
+              else
+                fi.codec.decodeValue(raw) match
+                  case Right(v) => fi.setFieldValue(regs, v)
+                  case Left(e)  => error = e
             idx += 1
 
           if error != null then Left(error)
@@ -242,15 +277,14 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
 
   private def resolveOptionInnerCodec[F[_, _]](
     field: Term[F, ?, ?],
-    idx: Int,
-    innerCodecs: Array[DynamoDBCodec[Any]]
+    fi: FieldInfo
   )(using hasInstance: HasInstance[F]): Unit =
     val variant = field.value.asVariant.filter(v => isOptionReflect(field.value))
     variant.foreach { v =>
       v.cases.find(_.name == "Some").foreach { someTerm =>
         someTerm.value.asRecord.foreach { someRecord =>
           if someRecord.fields.nonEmpty then
-            innerCodecs(idx) = resolveCodec[F](someRecord.fields(0).value.metadata)
+            fi.setInnerCodec(resolveCodec[F](someRecord.fields(0).value.metadata))
         }
       }
     }

@@ -256,7 +256,15 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
 
               if raw == null || (raw.nul() != null && raw.nul().booleanValue()) then
                 if fi.isOptional then fi.setFieldValue(regs, None)
-                else error = SchemaError.missingField(Nil, fi.name)
+                else
+                  defaultValue match
+                    case Some(dv) =>
+                      val defaultRegs = Registers(totalRegisters)
+                      deconstructor.deconstruct(defaultRegs, 0, dv)
+                      val defaultVal = fi.getFieldValue(defaultRegs)
+                      fi.setFieldValue(regs, defaultVal)
+                    case None =>
+                      error = SchemaError.missingField(Nil, fi.name)
               else if fi.isOptional then
                 fi.effectiveCodec.decodeValue(raw) match
                   case Right(v) => fi.setFieldValue(regs, Some(v))

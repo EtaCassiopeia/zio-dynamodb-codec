@@ -144,7 +144,8 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     val register: Register[?],
     val idx: Int,
     val isOptional: Boolean,
-    val isTransient: Boolean
+    val isTransient: Boolean,
+    val prefix: Option[String]
   ):
     var codec: DynamoDBCodec[Any]      = null
     var innerCodec: DynamoDBCodec[Any] = null
@@ -207,13 +208,17 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
           .getOrElse(fieldNameMapper(field.name))
         val isOpt       = isOptionReflect(field.value)
         val isTransient = field.modifiers.exists(_.isInstanceOf[Modifier.transient])
+        val prefix = field.modifiers.collectFirst {
+          case m: Modifier.config if m.key == "dynamodb.key-prefix" => m.value
+        }
 
         infos(i) = new FieldInfo(
           name = name,
           register = fieldRegisters(i),
           idx = i,
           isOptional = isOpt,
-          isTransient = isTransient
+          isTransient = isTransient,
+          prefix = prefix
         )
         i += 1
 
@@ -237,10 +242,16 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
 
               if fi.isOptional then
                 fieldVal match
-                  case None    => ()
-                  case Some(v) => output.put(fi.name, fi.effectiveCodec.encodeValue(v))
-                  case _       => output.put(fi.name, fi.codec.encodeValue(fieldVal))
-              else output.put(fi.name, fi.codec.encodeValue(fieldVal))
+                  case None => ()
+                  case Some(v) =>
+                    val av = fi.effectiveCodec.encodeValue(v)
+                    output.put(fi.name, applyPrefix(fi.prefix, av))
+                  case _ =>
+                    val av = fi.codec.encodeValue(fieldVal)
+                    output.put(fi.name, applyPrefix(fi.prefix, av))
+              else
+                val av = fi.codec.encodeValue(fieldVal)
+                output.put(fi.name, applyPrefix(fi.prefix, av))
             idx += 1
         ,
         dec = input =>
@@ -266,11 +277,13 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
                     case None =>
                       error = SchemaError.missingField(Nil, fi.name)
               else if fi.isOptional then
-                fi.effectiveCodec.decodeValue(raw) match
+                val stripped = stripPrefix(fi.prefix, raw)
+                fi.effectiveCodec.decodeValue(stripped) match
                   case Right(v) => fi.setFieldValue(regs, Some(v))
                   case Left(e)  => error = e
               else
-                fi.codec.decodeValue(raw) match
+                val stripped = stripPrefix(fi.prefix, raw)
+                fi.codec.decodeValue(stripped) match
                   case Right(v) => fi.setFieldValue(regs, v)
                   case Left(e)  => error = e
             idx += 1
@@ -279,6 +292,17 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
           else Right(constructor.construct(regs, 0))
       )
     }
+
+  private def applyPrefix(prefix: Option[String], av: AttributeValue): AttributeValue =
+    prefix match
+      case Some(p) if av.s() != null => AttributeValue.builder().s(p + av.s()).build()
+      case _                         => av
+
+  private def stripPrefix(prefix: Option[String], av: AttributeValue): AttributeValue =
+    prefix match
+      case Some(p) if av.s() != null && av.s().startsWith(p) =>
+        AttributeValue.builder().s(av.s().substring(p.length)).build()
+      case _ => av
 
   private def isOptionReflect[F[_, _]](reflect: Reflect[F, ?]): Boolean =
     reflect.asVariant.exists(_.typeId.name == "Option")

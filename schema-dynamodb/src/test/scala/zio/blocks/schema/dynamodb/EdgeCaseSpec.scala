@@ -14,6 +14,11 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   case class WithOptionalRecord(data: Option[SimpleRec]) derives Schema
   case class WithVectorField(items: Vector[String]) derives Schema
   case class WithNonStringMap(data: Map[Int, String]) derives Schema
+
+  case class WithTransient(
+    @Modifier.transient computed: String = "computed-value",
+    name: String
+  ) derives Schema
   case class WithEither(result: Either[String, Int]) derives Schema
 
   enum Status derives Schema:
@@ -274,6 +279,26 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         val av    = codec.encodeValue(value)
         val back  = codec.decodeValue(av)
         assertTrue(av.s() == "hello", back == Right(value))
+      }
+    ),
+    suite("@transient fields")(
+      test("transient field excluded from encoded map") {
+        val codec = DynamoDB.codec[WithTransient]
+        val value = WithTransient(computed = "ignored", name = "Alice")
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(value, map)
+        assertTrue(
+          !map.containsKey("computed"),
+          map.containsKey("name"),
+          map.get("name").s() == "Alice"
+        )
+      },
+      test("transient field zero-initialized on decode") {
+        val codec = DynamoDB.codec[WithTransient]
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        map.put("name", AttributeValue.builder().s("Bob").build())
+        val back = codec.decode(map)
+        assertTrue(back.isRight, back.toOption.get.name == "Bob")
       }
     )
   )

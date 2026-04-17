@@ -15,6 +15,9 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   case class WithVectorField(items: Vector[String]) derives Schema
   case class WithNonStringMap(data: Map[Int, String]) derives Schema
 
+  case class TreeNode(value: String, children: List[TreeNode]) derives Schema
+  case class LinkedNode(value: Int, next: Option[LinkedNode]) derives Schema
+
   case class WithTransient(
     @Modifier.transient computed: String = "computed-value",
     name: String
@@ -299,6 +302,38 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         map.put("name", AttributeValue.builder().s("Bob").build())
         val back = codec.decode(map)
         assertTrue(back.isRight, back.toOption.get.name == "Bob")
+      }
+    ),
+    suite("Recursive types")(
+      test("TreeNode: leaf") {
+        val codec = DynamoDB.codec[TreeNode]
+        val leaf  = TreeNode("leaf", Nil)
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(leaf, map)
+        val back = codec.decode(map)
+        assertTrue(back == Right(leaf))
+      },
+      test("TreeNode: nested tree") {
+        val codec = DynamoDB.codec[TreeNode]
+        val tree = TreeNode(
+          "root",
+          List(
+            TreeNode("left", List(TreeNode("ll", Nil))),
+            TreeNode("right", Nil)
+          )
+        )
+        val map = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(tree, map)
+        val back = codec.decode(map)
+        assertTrue(back == Right(tree))
+      },
+      test("LinkedNode: chain of 3") {
+        val codec = DynamoDB.codec[LinkedNode]
+        val chain = LinkedNode(1, Some(LinkedNode(2, Some(LinkedNode(3, None)))))
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(chain, map)
+        val back = codec.decode(map)
+        assertTrue(back == Right(chain))
       }
     )
   )

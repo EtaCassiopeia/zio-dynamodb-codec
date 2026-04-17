@@ -13,6 +13,14 @@ import java.util.UUID
 
 class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity) extends Deriver[DynamoDBCodec]:
 
+  private val recursiveRecordCache =
+    new ThreadLocal[java.util.HashMap[TypeId[?], Array[FieldInfo]]]:
+      override def initialValue(): java.util.HashMap[TypeId[?], Array[FieldInfo]] = new java.util.HashMap
+
+  override def instanceOverrides: IndexedSeq[InstanceOverride] =
+    recursiveRecordCache.remove()
+    super.instanceOverrides
+
   override def derivePrimitive[A](
     primitiveType: PrimitiveType[A],
     typeId: TypeId[A],
@@ -198,36 +206,53 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     val fieldRegisters = bindingRecord.registers
 
     Lazy {
-      val infos = new Array[FieldInfo](fieldCount)
+      // Detect recursion: any field backed by a Deferred node means recursive type
+      val isRecursive = fields.exists(_.value.isInstanceOf[Reflect.Deferred[F, ?]])
+      var infos: Array[FieldInfo] =
+        if isRecursive then recursiveRecordCache.get.get(typeId)
+        else null
+      val deriveCodecs = infos eq null
 
-      var i = 0
-      while i < fieldCount do
-        val field = fields(i)
-        val name = field.modifiers
-          .collectFirst { case m: Modifier.rename => m.name }
-          .getOrElse(fieldNameMapper(field.name))
-        val isOpt       = isOptionReflect(field.value)
-        val isTransient = field.modifiers.exists(_.isInstanceOf[Modifier.transient])
-        val prefix = field.modifiers.collectFirst {
-          case m: Modifier.config if m.key == "dynamodb.key-prefix" => m.value
-        }
+      // Pass 1: Create FieldInfo array with metadata (no codecs yet)
+      if deriveCodecs then
+        infos = new Array[FieldInfo](fieldCount)
+        var i = 0
+        while i < fieldCount do
+          val field = fields(i)
+          val name = field.modifiers
+            .collectFirst { case m: Modifier.rename => m.name }
+            .getOrElse(fieldNameMapper(field.name))
+          val isOpt       = isOptionReflect(field.value)
+          val isTransient = field.modifiers.exists(_.isInstanceOf[Modifier.transient])
+          val prefix = field.modifiers.collectFirst {
+            case m: Modifier.config if m.key == "dynamodb.key-prefix" => m.value
+          }
 
-        infos(i) = new FieldInfo(
-          name = name,
-          register = fieldRegisters(i),
-          idx = i,
-          isOptional = isOpt,
-          isTransient = isTransient,
-          prefix = prefix
-        )
-        i += 1
+          infos(i) = new FieldInfo(
+            name = name,
+            register = fieldRegisters(i),
+            idx = i,
+            isOptional = isOpt,
+            isTransient = isTransient,
+            prefix = prefix
+          )
+          i += 1
 
-      // Resolve codecs
-      var j = 0
-      while j < fieldCount do
-        infos(j).setCodec(resolveCodec[F](fields(j).value.metadata))
-        if infos(j).isOptional then resolveOptionInnerCodec[F](fields(j), infos(j))
-        j += 1
+        // Cache BEFORE resolving codecs — breaks recursive cycles
+        if isRecursive then recursiveRecordCache.get.put(typeId, infos)
+
+      // Pass 2: Resolve codecs and set them into FieldInfo
+      if deriveCodecs then
+        try
+          var j = 0
+          while j < fieldCount do
+            infos(j).setCodec(resolveCodec[F](fields(j).value.metadata))
+            if infos(j).isOptional then resolveOptionInnerCodec[F](fields(j), infos(j))
+            j += 1
+        catch
+          case e: Throwable =>
+            if isRecursive then recursiveRecordCache.get.remove(typeId)
+            throw e
 
       DynamoDBCodec.record[A](
         enc = (value, output) =>

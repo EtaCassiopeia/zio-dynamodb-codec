@@ -659,6 +659,10 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     defaultValue: Option[DynamicValue],
     examples: Seq[DynamicValue]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[DynamicValue]] =
-    throw new UnsupportedOperationException("Dynamic derivation not yet implemented")
+    Lazy:
+      DynamoDBCodec.primitive[DynamicValue](
+        dv => DynamicValueCodec.encode(dv),
+        av => DynamicValueCodec.decode(av)
+      )
 
 object DynamoDBCodecDeriver extends DynamoDBCodecDeriver(NameMapper.identity)

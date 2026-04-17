@@ -335,5 +335,19 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         val back = codec.decode(map)
         assertTrue(back == Right(chain))
       }
+    ),
+    suite("DynamicValue")(
+      test("DynamicValue with NULL") {
+        val codec  = DynamoDB.codec[DynamicValue]
+        val av     = AttributeValue.builder().nul(true).build()
+        val result = codec.decodeValue(av)
+        assertTrue(result.isRight)
+      },
+      test("DynamicValue with SS attribute") {
+        val codec  = DynamoDB.codec[DynamicValue]
+        val av     = AttributeValue.builder().ss("a", "b", "c").build()
+        val result = codec.decodeValue(av)
+        assertTrue(result.isRight)
+      }
     )
   )

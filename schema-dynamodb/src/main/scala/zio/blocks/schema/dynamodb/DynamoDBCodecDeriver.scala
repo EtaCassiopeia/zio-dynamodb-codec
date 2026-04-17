@@ -305,18 +305,24 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
                 val stripped = stripPrefix(fi.prefix, raw)
                 fi.effectiveCodec.decodeValue(stripped) match
                   case Right(v) => fi.setFieldValue(regs, Some(v))
-                  case Left(e)  => error = e
+                  case Left(e)  => error = wrapFieldError(fi.name, e)
               else
                 val stripped = stripPrefix(fi.prefix, raw)
                 fi.codec.decodeValue(stripped) match
                   case Right(v) => fi.setFieldValue(regs, v)
-                  case Left(e)  => error = e
+                  case Left(e)  => error = wrapFieldError(fi.name, e)
             idx += 1
 
           if error != null then Left(error)
           else Right(constructor.construct(regs, 0))
       )
     }
+
+  private def wrapFieldError(fieldName: String, original: SchemaError): SchemaError =
+    SchemaError.expectationMismatch(
+      List(DynamicOptic.Node.Field(fieldName)),
+      original.message
+    )
 
   private def applyPrefix(prefix: Option[String], av: AttributeValue): AttributeValue =
     prefix match

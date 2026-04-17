@@ -15,6 +15,10 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   case class WithVectorField(items: Vector[String]) derives Schema
   case class WithNonStringMap(data: Map[Int, String]) derives Schema
 
+  case class Outer(inner: Inner) derives Schema
+  case class Inner(deep: Deep) derives Schema
+  case class Deep(value: Int) derives Schema
+
   case class TreeNode(value: String, children: List[TreeNode]) derives Schema
   case class LinkedNode(value: Int, next: Option[LinkedNode]) derives Schema
 
@@ -334,6 +338,19 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         codec.encode(chain, map)
         val back = codec.decode(map)
         assertTrue(back == Right(chain))
+      }
+    ),
+    suite("Errors")(
+      test("deeply nested error includes field context") {
+        val codec    = DynamoDB.codec[Outer]
+        val map      = new java.util.HashMap[String, AttributeValue]()
+        val innerMap = new java.util.HashMap[String, AttributeValue]()
+        val deepMap  = new java.util.HashMap[String, AttributeValue]()
+        deepMap.put("value", AttributeValue.builder().s("not-a-number").build())
+        innerMap.put("deep", AttributeValue.builder().m(deepMap).build())
+        map.put("inner", AttributeValue.builder().m(innerMap).build())
+        val result = codec.decode(map)
+        assertTrue(result.isLeft)
       }
     ),
     suite("DynamicValue")(

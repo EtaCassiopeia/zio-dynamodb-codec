@@ -17,7 +17,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(`schema-dynamodb`)
+  .aggregate(`schema-dynamodb`, `dynamodb-codec-zio`)
   .settings(
     name         := "zio-dynamodb-codec",
     publish      := {},
@@ -36,6 +36,21 @@ lazy val `schema-dynamodb` = project
       "software.amazon.awssdk" % "dynamodb"          % awsSdkVersion,
       "dev.zio"               %% "zio-test"          % zioVersion % Test,
       "dev.zio"               %% "zio-test-sbt"      % zioVersion % Test
+    ),
+    testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+  )
+
+lazy val `dynamodb-codec-zio` = project
+  .in(file("dynamodb-codec-zio"))
+  .dependsOn(`schema-dynamodb`)
+  .settings(commonSettings)
+  .settings(
+    name := "zio-dynamodb-codec",
+    libraryDependencies ++= Seq(
+      "dev.zio" %% "zio"          % zioVersion,
+      "dev.zio" %% "zio-streams"  % zioVersion,
+      "dev.zio" %% "zio-test"     % zioVersion % Test,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % Test
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
   )

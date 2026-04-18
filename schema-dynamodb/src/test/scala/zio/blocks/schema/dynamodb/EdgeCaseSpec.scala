@@ -27,6 +27,7 @@ object EdgeCaseSpec extends ZIOSpecDefault:
     name: String
   ) derives Schema
   case class WithEither(result: Either[String, Int]) derives Schema
+  case class WithTuple(pair: (String, Int)) derives Schema
 
   enum Status derives Schema:
     case Active, Inactive, Suspended
@@ -259,6 +260,22 @@ object EdgeCaseSpec extends ZIOSpecDefault:
       test("Either[String, Int] Right round-trip") {
         val codec = DynamoDB.codec[WithEither]
         val value = WithEither(Right(42))
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(value, map)
+        val back = codec.decode(map)
+        assertTrue(back == Right(value))
+      },
+      test("Either[String, Int] Left round-trip") {
+        val codec = DynamoDB.codec[WithEither]
+        val value = WithEither(Left("error"))
+        val map   = new java.util.HashMap[String, AttributeValue]()
+        codec.encode(value, map)
+        val back = codec.decode(map)
+        assertTrue(back == Right(value))
+      },
+      test("Tuple2 round-trip") {
+        val codec = DynamoDB.codec[WithTuple]
+        val value = WithTuple(("hello", 42))
         val map   = new java.util.HashMap[String, AttributeValue]()
         codec.encode(value, map)
         val back = codec.decode(map)

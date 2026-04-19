@@ -17,7 +17,7 @@ lazy val commonSettings = Seq(
 
 lazy val root = project
   .in(file("."))
-  .aggregate(`schema-dynamodb`, `dynamodb-codec-zio`)
+  .aggregate(`schema-dynamodb`, `dynamodb-codec-zio`, benchmarks)
   .settings(
     name         := "zio-dynamodb-codec",
     publish      := {},
@@ -55,4 +55,22 @@ lazy val `dynamodb-codec-zio` = project
       "dev.zio" %% "zio-test-sbt" % zioVersion % Test
     ),
     testFrameworks += new TestFramework("zio.test.sbt.ZTestFramework")
+  )
+
+lazy val benchmarks = project
+  .in(file("benchmarks"))
+  .enablePlugins(JmhPlugin)
+  .dependsOn(`schema-dynamodb`)
+  .settings(
+    name         := "benchmarks",
+    publish      := {},
+    publishLocal := {},
+    scalaVersion := scala3Version,
+    libraryDependencies ++= Seq(
+      "org.systemfw"          %% "dynosaur-core"     % dynosaurVersion,
+      "dev.zio"               %% "zio-blocks-schema" % zioBlocksVersion,
+      "software.amazon.awssdk" % "dynamodb"          % awsSdkVersion,
+      "org.scanamo"           %% "scanamo"           % "1.1.0"
+    ),
+    scalacOptions ++= Seq("-deprecation", "-feature")
   )

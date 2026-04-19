@@ -74,6 +74,72 @@ object WireCompatMirrorSpec extends ZIOSpecDefault:
     eo => s"(${eo.start},${eo.end},${eo.tr},${eo.uid})"
   )
 
+  // Full record
+  val dEventContractId: DSchema[ContractId] =
+    DSchema[String].imap(s => ContractId(s.stripPrefix("event-")))("event-" + _.show)
+
+  case class LedgerItem(
+    contractId: ContractId,
+    sortKey: CompositeKey,
+    uniqueId: String,
+    status: String,
+    orderings: List[EvtOrdering],
+    pivotSeqNum: Option[SeqNumInt],
+    date: String,
+    version: Option[Int],
+    tamperKey: Option[String]
+  )
+
+  val dLedgerItem: DSchema[LedgerItem] = DSchema.record[LedgerItem] { field =>
+    (
+      field("contract_id", _.contractId)(dEventContractId),
+      field("SK", _.sortKey)(dCompositeKey),
+      field("unique_id", _.uniqueId),
+      field("status", _.status),
+      field("orderings", _.orderings)(dOrdering.asList),
+      field.opt("pivot_seq_num", _.pivotSeqNum)(dSeqNumInt),
+      field("date", _.date),
+      field.opt("version", _.version),
+      field.opt("tamper_key", _.tamperKey)
+    ).mapN(LedgerItem.apply)
+  }
+
+  case class ZLedgerItem(
+    @Modifier.rename("contract_id") @Modifier.config("dynamodb.key-prefix", "event-") contractId: ContractId,
+    @Modifier.rename("SK") sortKey: CompositeKey,
+    @Modifier.rename("unique_id") uniqueId: String,
+    status: String,
+    orderings: List[EvtOrdering],
+    @Modifier.rename("pivot_seq_num") pivotSeqNum: Option[SeqNumInt],
+    date: String,
+    version: Option[Int],
+    @Modifier.rename("tamper_key") tamperKey: Option[String]
+  ) derives Schema
+
+  val orderings = List(EvtOrdering(0, 5, 0, "evt-1"), EvtOrdering(6, 10, 1, "evt-2"))
+  val fullItem = LedgerItem(
+    ContractId("c-001"),
+    CompositeKey(LedgerSeqNum(5), Some("evt-abc")),
+    "evt-abc",
+    "ACTIVE",
+    orderings,
+    Some(SeqNumInt(10)),
+    "2025-04-17",
+    Some(1),
+    Some("key-123")
+  )
+  val nonesItem = fullItem.copy(pivotSeqNum = None, version = None, tamperKey = None)
+
+  def toZ(item: LedgerItem): ZLedgerItem = ZLedgerItem(
+    item.contractId, item.sortKey, item.uniqueId, item.status,
+    item.orderings, item.pivotSeqNum, item.date, item.version, item.tamperKey
+  )
+
+  def dEncode(item: LedgerItem): java.util.Map[String, AttributeValue] =
+    dLedgerItem.write(item).toOption.get.value.m()
+  def oEncode(item: ZLedgerItem): java.util.Map[String, AttributeValue] =
+    val m = new java.util.HashMap[String, AttributeValue](); DynamoDB.codec[ZLedgerItem].encode(item, m); m
+
   // Simple record
   case class SimpleRec(name: String, age: Int, active: Boolean)
   val dSimple: DSchema[SimpleRec] = DSchema.record[SimpleRec] { field =>
@@ -149,7 +215,34 @@ object WireCompatMirrorSpec extends ZIOSpecDefault:
         assertTrue(dResult.isRight, oResult.isRight, oResult.toOption.get.optional.isEmpty)
       }
     ),
+    suite("Full ledger item")(
+      test("all populated: identical maps")(assertMapsEqual(dEncode(fullItem), oEncode(toZ(fullItem)))),
+      test("all Nones: identical maps")(assertMapsEqual(dEncode(nonesItem), oEncode(toZ(nonesItem)))),
+      test("field names identical") {
+        assertTrue(dEncode(fullItem).keySet() == oEncode(toZ(fullItem)).keySet())
+      },
+      test("contract_id with prefix") {
+        assertTrue(dEncode(fullItem).get("contract_id") == oEncode(toZ(fullItem)).get("contract_id"))
+      },
+      test("orderings list")(assertTrue(dEncode(fullItem).get("orderings") == oEncode(toZ(fullItem)).get("orderings")))
+    ),
     suite("Cross-reading")(
+      test("our codec reads dynosaur data (all populated)") {
+        val result = DynamoDB.codec[ZLedgerItem].decode(dEncode(fullItem))
+        assertTrue(
+          result.isRight,
+          result.toOption.get.contractId == fullItem.contractId,
+          result.toOption.get.orderings == fullItem.orderings
+        )
+      },
+      test("dynosaur reads our data (all populated)") {
+        val result = dLedgerItem.read(dynosaur.DynamoValue.attributeMap(oEncode(toZ(fullItem))))
+        assertTrue(
+          result.isRight,
+          result.toOption.get.contractId == fullItem.contractId,
+          result.toOption.get.orderings == fullItem.orderings
+        )
+      },
       test("simple record: dynosaur reads our output") {
         val o =
           val m = new java.util.HashMap[String, AttributeValue]();

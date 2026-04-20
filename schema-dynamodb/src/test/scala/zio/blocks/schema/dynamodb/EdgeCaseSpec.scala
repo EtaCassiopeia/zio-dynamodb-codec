@@ -15,6 +15,11 @@ object EdgeCaseSpec extends ZIOSpecDefault:
   case class WithVectorField(items: Vector[String]) derives Schema
   case class WithNonStringMap(data: Map[Int, String]) derives Schema
 
+  object PackageA:
+    case class Item(a: String) derives Schema
+  object PackageB:
+    case class Item(x: Int, y: Int) derives Schema
+
   case class Outer(inner: Inner) derives Schema
   case class Inner(deep: Deep) derives Schema
   case class Deep(value: Int) derives Schema
@@ -382,6 +387,23 @@ object EdgeCaseSpec extends ZIOSpecDefault:
         val av     = AttributeValue.builder().ss("a", "b", "c").build()
         val result = codec.decodeValue(av)
         assertTrue(result.isRight)
+      }
+    ),
+    suite("Same-name type disambiguation")(
+      test("identically-named types in different objects produce different codecs") {
+        val codecA = DynamoDB.codec[PackageA.Item]
+        val codecB = DynamoDB.codec[PackageB.Item]
+        val mapA   = new java.util.HashMap[String, AttributeValue]()
+        val mapB   = new java.util.HashMap[String, AttributeValue]()
+        codecA.encode(PackageA.Item("hello"), mapA)
+        codecB.encode(PackageB.Item(1, 2), mapB)
+        assertTrue(
+          mapA.containsKey("a"),
+          !mapA.containsKey("x"),
+          mapB.containsKey("x"),
+          mapB.containsKey("y"),
+          !mapB.containsKey("a")
+        )
       }
     )
   )

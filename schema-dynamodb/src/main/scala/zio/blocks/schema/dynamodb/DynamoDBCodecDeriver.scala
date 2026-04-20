@@ -363,6 +363,10 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     defaultValue: Option[A],
     examples: Seq[A]
   )(implicit hasBinding: HasBinding[F], hasInstance: HasInstance[F]): Lazy[DynamoDBCodec[A]] =
+    val discriminatorField = modifiers
+      .collectFirst { case m: Modifier.config if m.key == "dynamodb.discriminator" => m.value }
+      .getOrElse(DiscriminatorField)
+
     val variantBinding = binding
     val caseCount      = cases.size
     val caseNames      = new Array[String](caseCount)
@@ -407,12 +411,12 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
         DynamoDBCodec.record[A](
           enc = (value, output) =>
             val idx = variantBinding.discriminator.discriminate(value)
-            output.put(DiscriminatorField, AttributeValue.builder().s(caseNames(idx)).build())
+            output.put(discriminatorField, AttributeValue.builder().s(caseNames(idx)).build())
             caseCodecs(idx).encode(value, output)
           ,
           dec = input =>
-            val discAv = input.get(DiscriminatorField)
-            if discAv == null || discAv.s() == null then Left(SchemaError.missingField(Nil, DiscriminatorField))
+            val discAv = input.get(discriminatorField)
+            if discAv == null || discAv.s() == null then Left(SchemaError.missingField(Nil, discriminatorField))
             else
               val caseName = discAv.s()
               val idx      = caseNameMap.get(caseName)

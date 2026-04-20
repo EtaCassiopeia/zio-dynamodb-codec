@@ -12,6 +12,10 @@ object DynamoDB:
 
   def withNameMapper(mapper: NameMapper): DynamoDBConfig = DynamoDBConfig(mapper)
 
+  extension [A](schema: Schema[A])
+    def dynamoDBCodec: DynamoDBCodec[A] =
+      schema.deriving[DynamoDBCodec](DynamoDBCodecDeriver).derive.asInstanceOf[DynamoDBCodec[A]]
+
 final class DynamoDBConfig(mapper: NameMapper):
   private val deriver = new DynamoDBCodecDeriver(mapper)
 

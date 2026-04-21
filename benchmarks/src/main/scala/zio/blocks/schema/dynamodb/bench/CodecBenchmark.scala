@@ -153,7 +153,8 @@ object ScanamoSetup:
 class BenchState:
   private val rng        = new Random(42)
   private def rs(n: Int) = rng.alphanumeric.take(n).mkString
-  private def rb(n: Int) = val b = new Array[Byte](n); rng.nextBytes(b); b
+  private def rb(n: Int) =
+    val b = new Array[Byte](n); rng.nextBytes(b); b
   private def mkOrdering(n: Int) =
     (0 until n).map(i => BenchEventOrdering(i * 5, (i + 1) * 5, i % 3, s"evt-${rs(8)}")).toList
 

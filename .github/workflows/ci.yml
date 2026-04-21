@@ -25,7 +25,7 @@ jobs:
         run: sbt scalafmtCheckAll
 
       - name: Compile
-        run: sbt "schema-dynamodb / compile" "dynamodb-codec-zio / compile"
+        run: sbt compile
 
       - name: Test
         run: sbt "schema-dynamodb / test" "dynamodb-codec-zio / test"

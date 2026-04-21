@@ -28,9 +28,7 @@ jobs:
         run: sbt test
 
       - name: Import PGP key
-        run: |
-          printf '%s' "$PGP_SECRET" | base64 -d | gpg --batch --dearmor | gpg --batch --import
-          gpg --list-secret-keys --keyid-format long
+        run: printf '%s' "$PGP_SECRET" | base64 -d | gpg --batch --dearmor | gpg --batch --import
         env:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
 

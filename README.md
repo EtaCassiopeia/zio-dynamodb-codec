@@ -13,10 +13,10 @@ Derives bidirectional codecs from schema definitions — encodes and decodes dir
 
 ```scala
 // Core codec (no ZIO dependency)
-libraryDependencies += "io.github.etacassiopeia" %% "zio-blocks-schema-dynamodb" % "@VERSION@"
+libraryDependencies += "io.github.etacassiopeia" %% "zio-blocks-schema-dynamodb" % "0.0.1"
 
 // ZIO integration (typed errors, IO operations)
-libraryDependencies += "io.github.etacassiopeia" %% "zio-dynamodb-codec" % "@VERSION@"
+libraryDependencies += "io.github.etacassiopeia" %% "zio-dynamodb-codec" % "0.0.1"
 ```
 
 Check the [Maven Central badge](#) above for the latest version.

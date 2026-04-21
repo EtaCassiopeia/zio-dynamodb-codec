@@ -79,7 +79,31 @@ object DynosaurSetup:
       field.opt("tamper_key_version", _.tamperKeyVersion),
       field("tags", _.tags)(DSchema[String].asList.imap(_.toSet)(_.toList))
     ).mapN { (k, uid, dsl, txn, lts, icid, ts, mla, cd, eg, co, heo, ps, iid, st, scd, sld, cdv, tkv, tags) =>
-      Item(k.a, k.b, uid, dsl, txn, lts, icid, ts, mla, cd, eg.a, eg.b, eg.c, co, heo, ps, iid, st, scd, sld, cdv, tkv, tags)
+      Item(
+        k.a,
+        k.b,
+        uid,
+        dsl,
+        txn,
+        lts,
+        icid,
+        ts,
+        mla,
+        cd,
+        eg.a,
+        eg.b,
+        eg.c,
+        co,
+        heo,
+        ps,
+        iid,
+        st,
+        scd,
+        sld,
+        cdv,
+        tkv,
+        tags
+      )
     }
   }
 
@@ -135,15 +159,28 @@ object ScanamoSetup:
     )
 
   case class Item(
-    contract_id: String, SK: String, unique_id: String, dsl_version: String,
-    transaction_id: String, lamport_timestamp: Long, instrument_class_id: String,
-    transactability_status: String, maintenance_lifecycle_account_state: String,
-    crypto_digest: Array[Byte], processed_primary_event: Array[Byte],
-    interpreted_primary_event: Option[Array[Byte]], primary_event_hash: Array[Byte],
-    corrected_ordering: List[BenchEventOrdering], historic_evidence_ordering: List[BenchEventOrdering],
-    pivot_seq_num: Option[Int], instrument_id: String, state: Array[Byte],
-    state_current_date: String, state_last_end_of_day_date: String,
-    crypto_digest_version: Option[Int], tamper_key_version: Option[String],
+    contract_id: String,
+    SK: String,
+    unique_id: String,
+    dsl_version: String,
+    transaction_id: String,
+    lamport_timestamp: Long,
+    instrument_class_id: String,
+    transactability_status: String,
+    maintenance_lifecycle_account_state: String,
+    crypto_digest: Array[Byte],
+    processed_primary_event: Array[Byte],
+    interpreted_primary_event: Option[Array[Byte]],
+    primary_event_hash: Array[Byte],
+    corrected_ordering: List[BenchEventOrdering],
+    historic_evidence_ordering: List[BenchEventOrdering],
+    pivot_seq_num: Option[Int],
+    instrument_id: String,
+    state: Array[Byte],
+    state_current_date: String,
+    state_last_end_of_day_date: String,
+    crypto_digest_version: Option[Int],
+    tamper_key_version: Option[String],
     tags: Set[String]
   )
 
@@ -162,35 +199,85 @@ class BenchState:
   val tagSet    = Set("tag1", "tag2", "tag3", "vip", "active")
 
   val dynosaurItem = DynosaurSetup.Item(
-    "contract-" + rs(12), String.format("%010d", 42: Integer) + "#" + rs(12),
-    rs(12), "3.0", rs(16), System.currentTimeMillis(), rs(10), "ACTIVE", "OPEN",
-    rb(64), rb(256), Some(rb(128)), rb(32), orderings, orderings,
-    Some(10), rs(12), rb(512), "2025-04-17", "2025-04-16", Some(1),
-    Some(java.util.UUID.randomUUID().toString), tagSet
+    "contract-" + rs(12),
+    String.format("%010d", 42: Integer) + "#" + rs(12),
+    rs(12),
+    "3.0",
+    rs(16),
+    System.currentTimeMillis(),
+    rs(10),
+    "ACTIVE",
+    "OPEN",
+    rb(64),
+    rb(256),
+    Some(rb(128)),
+    rb(32),
+    orderings,
+    orderings,
+    Some(10),
+    rs(12),
+    rb(512),
+    "2025-04-17",
+    "2025-04-16",
+    Some(1),
+    Some(java.util.UUID.randomUUID().toString),
+    tagSet
   )
   val dynosaurDV = DynosaurSetup.schema.write(dynosaurItem).toOption.get
 
   val zioBlocksItem = ZioBlocksSetup.Item(
-    dynosaurItem.contractId, dynosaurItem.sortKey, dynosaurItem.uniqueId, dynosaurItem.dslVersion,
-    dynosaurItem.transactionId, dynosaurItem.lamportTimestamp, dynosaurItem.instrumentClassId,
-    dynosaurItem.transactabilityStatus, dynosaurItem.maintenanceLifecycleAccountState,
-    dynosaurItem.cryptoDigest, dynosaurItem.processedPrimaryEvent, dynosaurItem.interpretedPrimaryEvent,
-    dynosaurItem.primaryEventHash, orderings, orderings, dynosaurItem.pivotSeqNum,
-    dynosaurItem.instrumentId, dynosaurItem.state, dynosaurItem.stateCurrentDate,
-    dynosaurItem.stateLastEndOfDayDate, dynosaurItem.cryptoDigestVersion, dynosaurItem.tamperKeyVersion, tagSet
+    dynosaurItem.contractId,
+    dynosaurItem.sortKey,
+    dynosaurItem.uniqueId,
+    dynosaurItem.dslVersion,
+    dynosaurItem.transactionId,
+    dynosaurItem.lamportTimestamp,
+    dynosaurItem.instrumentClassId,
+    dynosaurItem.transactabilityStatus,
+    dynosaurItem.maintenanceLifecycleAccountState,
+    dynosaurItem.cryptoDigest,
+    dynosaurItem.processedPrimaryEvent,
+    dynosaurItem.interpretedPrimaryEvent,
+    dynosaurItem.primaryEventHash,
+    orderings,
+    orderings,
+    dynosaurItem.pivotSeqNum,
+    dynosaurItem.instrumentId,
+    dynosaurItem.state,
+    dynosaurItem.stateCurrentDate,
+    dynosaurItem.stateLastEndOfDayDate,
+    dynosaurItem.cryptoDigestVersion,
+    dynosaurItem.tamperKeyVersion,
+    tagSet
   )
   val zioBlocksCodec = zio.blocks.schema.dynamodb.DynamoDB.codec[ZioBlocksSetup.Item]
   val zioBlocksMap: java.util.Map[String, AwsAV] =
     val m = new java.util.HashMap[String, AwsAV](); zioBlocksCodec.encode(zioBlocksItem, m); m
 
   val scanamoItem = ScanamoSetup.Item(
-    dynosaurItem.contractId, dynosaurItem.sortKey, dynosaurItem.uniqueId, dynosaurItem.dslVersion,
-    dynosaurItem.transactionId, dynosaurItem.lamportTimestamp, dynosaurItem.instrumentClassId,
-    dynosaurItem.transactabilityStatus, dynosaurItem.maintenanceLifecycleAccountState,
-    dynosaurItem.cryptoDigest, dynosaurItem.processedPrimaryEvent, dynosaurItem.interpretedPrimaryEvent,
-    dynosaurItem.primaryEventHash, orderings, orderings, dynosaurItem.pivotSeqNum,
-    dynosaurItem.instrumentId, dynosaurItem.state, dynosaurItem.stateCurrentDate,
-    dynosaurItem.stateLastEndOfDayDate, dynosaurItem.cryptoDigestVersion, dynosaurItem.tamperKeyVersion, tagSet
+    dynosaurItem.contractId,
+    dynosaurItem.sortKey,
+    dynosaurItem.uniqueId,
+    dynosaurItem.dslVersion,
+    dynosaurItem.transactionId,
+    dynosaurItem.lamportTimestamp,
+    dynosaurItem.instrumentClassId,
+    dynosaurItem.transactabilityStatus,
+    dynosaurItem.maintenanceLifecycleAccountState,
+    dynosaurItem.cryptoDigest,
+    dynosaurItem.processedPrimaryEvent,
+    dynosaurItem.interpretedPrimaryEvent,
+    dynosaurItem.primaryEventHash,
+    orderings,
+    orderings,
+    dynosaurItem.pivotSeqNum,
+    dynosaurItem.instrumentId,
+    dynosaurItem.state,
+    dynosaurItem.stateCurrentDate,
+    dynosaurItem.stateLastEndOfDayDate,
+    dynosaurItem.cryptoDigestVersion,
+    dynosaurItem.tamperKeyVersion,
+    tagSet
   )
   val scanamoFmt = summon[org.scanamo.DynamoFormat[ScanamoSetup.Item]]
   val scanamoDV  = scanamoFmt.write(scanamoItem)

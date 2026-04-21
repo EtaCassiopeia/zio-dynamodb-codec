@@ -85,7 +85,6 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
           a => AttributeValue.builder().s(a.getCurrencyCode).build(),
           av => expectS(av).flatMap(s => tryParse(s, java.util.Currency.getInstance))
         )
-      case _ => throw new UnsupportedOperationException(s"Unsupported primitive type: $pt")
     ).asInstanceOf[DynamoDBCodec[A]]
 
   private val stringCodec: DynamoDBCodec[String] = DynamoDBCodec.primitive[String](

@@ -1,8 +1,25 @@
 # zio-dynamodb-codec
 
+[![CI](https://github.com/EtaCassiopeia/zio-dynamodb-codec/actions/workflows/ci.yml/badge.svg)](https://github.com/EtaCassiopeia/zio-dynamodb-codec/actions/workflows/ci.yml)
+[![Release](https://github.com/EtaCassiopeia/zio-dynamodb-codec/actions/workflows/release.yml/badge.svg)](https://github.com/EtaCassiopeia/zio-dynamodb-codec/actions/workflows/release.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.etacassiopeia/zio-blocks-schema-dynamodb_3)](https://central.sonatype.com/artifact/io.github.etacassiopeia/zio-blocks-schema-dynamodb_3)
+[![License](https://img.shields.io/github/license/EtaCassiopeia/zio-dynamodb-codec)](https://www.apache.org/licenses/LICENSE-2.0)
+
 High-performance DynamoDB codec for Scala 3 using [zio-blocks-schema](https://github.com/zio/zio-blocks).
 
 Derives bidirectional codecs from schema definitions — encodes and decodes directly to/from AWS SDK `AttributeValue` with no intermediate representation.
+
+## Installation
+
+```scala
+// Core codec (no ZIO dependency)
+libraryDependencies += "io.github.etacassiopeia" %% "zio-blocks-schema-dynamodb" % "@VERSION@"
+
+// ZIO integration (typed errors, IO operations)
+libraryDependencies += "io.github.etacassiopeia" %% "zio-dynamodb-codec" % "@VERSION@"
+```
+
+Check the [Maven Central badge](#) above for the latest version.
 
 ## Usage
 

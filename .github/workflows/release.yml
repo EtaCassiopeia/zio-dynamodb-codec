@@ -35,6 +35,16 @@ jobs:
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
 
+      - name: Update README version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          sed -i "s|@VERSION@|$VERSION|g; s|\"io.github.etacassiopeia\" %% \"zio-blocks-schema-dynamodb\" % \"[^\"]*\"|\"io.github.etacassiopeia\" %% \"zio-blocks-schema-dynamodb\" % \"$VERSION\"|g; s|\"io.github.etacassiopeia\" %% \"zio-dynamodb-codec\" % \"[^\"]*\"|\"io.github.etacassiopeia\" %% \"zio-dynamodb-codec\" % \"$VERSION\"|g" README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "Update README version to $VERSION"
+          git push origin HEAD:main
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

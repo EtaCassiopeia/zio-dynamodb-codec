@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: sbt
+
+      - name: Check formatting
+        run: sbt scalafmtCheckAll
+
+      - name: Compile
+        run: sbt "schema-dynamodb / compile" "dynamodb-codec-zio / compile"
+
+      - name: Test
+        run: sbt "schema-dynamodb / test" "dynamodb-codec-zio / test"

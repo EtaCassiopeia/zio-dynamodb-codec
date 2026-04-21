@@ -13,6 +13,47 @@ abstract class DynamoDBCodec[A]:
 
   def decodeValue(av: AttributeValue): Either[SchemaError, A]
 
+  final def transform[B](from: A => B, to: B => A): DynamoDBCodec[B] =
+    val self = this
+    new DynamoDBCodec[B]:
+      def encode(value: B, output: java.util.Map[String, AttributeValue]): Unit =
+        self.encode(to(value), output)
+
+      def decode(input: java.util.Map[String, AttributeValue]): Either[SchemaError, B] =
+        self.decode(input).map(from)
+
+      def encodeValue(value: B): AttributeValue =
+        self.encodeValue(to(value))
+
+      def decodeValue(av: AttributeValue): Either[SchemaError, B] =
+        self.decodeValue(av).map(from)
+
+  final def transformOrFail[B](from: A => Either[SchemaError, B], to: B => A): DynamoDBCodec[B] =
+    val self = this
+    new DynamoDBCodec[B]:
+      def encode(value: B, output: java.util.Map[String, AttributeValue]): Unit =
+        self.encode(to(value), output)
+
+      def decode(input: java.util.Map[String, AttributeValue]): Either[SchemaError, B] =
+        self.decode(input).flatMap(from)
+
+      def encodeValue(value: B): AttributeValue =
+        self.encodeValue(to(value))
+
+      def decodeValue(av: AttributeValue): Either[SchemaError, B] =
+        self.decodeValue(av).flatMap(from)
+
+  final def encodeSafe(value: A): Either[SchemaError, java.util.Map[String, AttributeValue]] =
+    try
+      val map = new java.util.HashMap[String, AttributeValue]()
+      encode(value, map)
+      Right(map)
+    catch case e: SchemaError => Left(e)
+
+  final def encodeValueSafe(value: A): Either[SchemaError, AttributeValue] =
+    try Right(encodeValue(value))
+    catch case e: SchemaError => Left(e)
+
 object DynamoDBCodec:
 
   def primitive[A](

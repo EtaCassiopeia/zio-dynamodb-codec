@@ -35,18 +35,18 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
   @SuppressWarnings(Array("org.wartremover.warts.AsInstanceOf"))
   private def primitiveCodec[A](pt: PrimitiveType[A]): DynamoDBCodec[A] =
     (pt match
-      case _: PrimitiveType.String     => stringCodec
-      case _: PrimitiveType.Boolean    => booleanCodec
-      case _: PrimitiveType.Byte       => numCodec[Byte](_.toString, _.toByte)
-      case _: PrimitiveType.Short      => numCodec[Short](_.toString, _.toShort)
-      case _: PrimitiveType.Int        => numCodec[Int](_.toString, _.toInt)
-      case _: PrimitiveType.Long       => numCodec[Long](_.toString, _.toLong)
-      case _: PrimitiveType.Float      => numCodec[Float](_.toString, _.toFloat)
-      case _: PrimitiveType.Double     => numCodec[Double](_.toString, _.toDouble)
-      case _: PrimitiveType.BigInt     => numCodec[scala.math.BigInt](_.toString, s => scala.math.BigInt(s))
-      case _: PrimitiveType.BigDecimal => numCodec[scala.math.BigDecimal](_.toString, s => scala.math.BigDecimal(s))
-      case _: PrimitiveType.Char       => charCodec
-      case PrimitiveType.Unit          => unitCodec
+      case _: PrimitiveType.String         => stringCodec
+      case _: PrimitiveType.Boolean        => booleanCodec
+      case _: PrimitiveType.Byte           => numCodec[Byte](_.toString, _.toByte)
+      case _: PrimitiveType.Short          => numCodec[Short](_.toString, _.toShort)
+      case _: PrimitiveType.Int            => numCodec[Int](_.toString, _.toInt)
+      case _: PrimitiveType.Long           => numCodec[Long](_.toString, _.toLong)
+      case _: PrimitiveType.Float          => numCodec[Float](_.toString, _.toFloat)
+      case _: PrimitiveType.Double         => numCodec[Double](_.toString, _.toDouble)
+      case _: PrimitiveType.BigInt         => numCodec[scala.math.BigInt](_.toString, s => scala.math.BigInt(s))
+      case _: PrimitiveType.BigDecimal     => numCodec[scala.math.BigDecimal](_.toString, s => scala.math.BigDecimal(s))
+      case _: PrimitiveType.Char           => charCodec
+      case PrimitiveType.Unit              => unitCodec
       case _: PrimitiveType.UUID           => uuidCodec
       case _: PrimitiveType.Instant        => temporalCodec[Instant](_.toString, Instant.parse)
       case _: PrimitiveType.LocalDate      => temporalCodec[LocalDate](_.toString, LocalDate.parse)
@@ -279,11 +279,13 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
             idx += 1
         ,
         dec = input =>
-          val regs               = Registers(totalRegisters)
-          var idx                = 0
-          var error: SchemaError = null
+          val regs = Registers(totalRegisters)
+          var idx  = 0
+          // Using null instead of Option to avoid allocation overhead in hot codec path.
+          // Accumulates all field errors rather than failing fast on the first one.
+          var errors: SchemaError = null
 
-          while idx < fieldCount && error == null do
+          while idx < fieldCount do
             val fi = infos(idx)
             if fi.isTransient then () // skip
             else
@@ -299,20 +301,25 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
                       val defaultVal = fi.getFieldValue(defaultRegs)
                       fi.setFieldValue(regs, defaultVal)
                     case None =>
-                      error = SchemaError.missingField(Nil, fi.name)
+                      val e = SchemaError.missingField(Nil, fi.name)
+                      errors = if errors == null then e else errors ++ e
               else if fi.isOptional then
                 val stripped = stripPrefix(fi.prefix, raw)
                 fi.effectiveCodec.decodeValue(stripped) match
                   case Right(v) => fi.setFieldValue(regs, Some(v))
-                  case Left(e)  => error = wrapFieldError(fi.name, e)
+                  case Left(e) =>
+                    val wrapped = wrapFieldError(fi.name, e)
+                    errors = if errors == null then wrapped else errors ++ wrapped
               else
                 val stripped = stripPrefix(fi.prefix, raw)
                 fi.codec.decodeValue(stripped) match
                   case Right(v) => fi.setFieldValue(regs, v)
-                  case Left(e)  => error = wrapFieldError(fi.name, e)
+                  case Left(e) =>
+                    val wrapped = wrapFieldError(fi.name, e)
+                    errors = if errors == null then wrapped else errors ++ wrapped
             idx += 1
 
-          if error != null then Left(error)
+          if errors != null then Left(errors)
           else Right(constructor.construct(regs, 0))
       )
     }
@@ -345,8 +352,7 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     variant.foreach { v =>
       v.cases.find(_.name == "Some").foreach { someTerm =>
         someTerm.value.asRecord.foreach { someRecord =>
-          if someRecord.fields.nonEmpty then
-            fi.setInnerCodec(resolveCodec[F](someRecord.fields(0).value.metadata))
+          if someRecord.fields.nonEmpty then fi.setInnerCodec(resolveCodec[F](someRecord.fields(0).value.metadata))
         }
       }
     }
@@ -494,11 +500,18 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
             if av.hasNs then
               val seqBuilder = newSeqBuilder[C, A](seqBinding.constructor, av.ns().size())
                 .asInstanceOf[seqBinding.constructor.Builder[A]]
+              // Using null instead of Option to avoid allocation overhead in hot codec path
+              var error: SchemaError = null
+              var idx                = 0
               av.ns().forEach { nStr =>
-                val decoded = elemCodec.decodeValue(AttributeValue.builder().n(nStr).build())
-                decoded.foreach(v => seqBinding.constructor.add(seqBuilder, v.asInstanceOf[A]))
+                if error == null then
+                  elemCodec.decodeValue(AttributeValue.builder().n(nStr).build()) match
+                    case Right(v) => seqBinding.constructor.add(seqBuilder, v.asInstanceOf[A])
+                    case Left(e)  => error = e.atIndex(idx)
+                idx += 1
               }
-              Right(seqBinding.constructor.result[A](seqBuilder))
+              if error != null then Left(error)
+              else Right(seqBinding.constructor.result[A](seqBuilder))
             else if av.hasL then decodeAsList(av, elemCodec, seqBinding)
             else Left(SchemaError.expectationMismatch(Nil, "Expected NS (number set) or L attribute"))
         )
@@ -523,14 +536,15 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
       val items = av.l()
       val seqBuilder =
         newSeqBuilder[C, A](seqBinding.constructor, items.size()).asInstanceOf[seqBinding.constructor.Builder[A]]
-      var i                  = 0
+      var i = 0
+      // Using null instead of Option to avoid allocation overhead in hot codec path
       var error: SchemaError = null
       while i < items.size() && error == null do
         elemCodec.decodeValue(items.get(i)) match
           case Right(v) =>
             seqBinding.constructor.add(seqBuilder, v.asInstanceOf[A])
           case Left(e) =>
-            error = e
+            error = e.atIndex(i)
         i += 1
       if error != null then Left(error)
       else Right(seqBinding.constructor.result[A](seqBuilder))
@@ -578,8 +592,9 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
             ,
             av =>
               if av.hasM then
-                val entries            = av.m()
-                val mapBuilder         = mapBinding.constructor.newObjectBuilder[K, V](entries.size())
+                val entries    = av.m()
+                val mapBuilder = mapBinding.constructor.newObjectBuilder[K, V](entries.size())
+                // Using null instead of Option to avoid allocation overhead in hot codec path
                 var error: SchemaError = null
                 entries.forEach { (k, v) =>
                   if error == null then
@@ -587,7 +602,7 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
                       case Right(decoded) =>
                         mapBinding.constructor.addObject(mapBuilder, k.asInstanceOf[K], decoded.asInstanceOf[V])
                       case Left(e) =>
-                        error = e
+                        error = e.atField(k)
                 }
                 if error != null then Left(error)
                 else Right(mapBinding.constructor.resultObject[K, V](mapBuilder))
@@ -610,9 +625,10 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
             ,
             av =>
               if av.hasL then
-                val items              = av.l()
-                val mapBuilder         = mapBinding.constructor.newObjectBuilder[K, V](items.size())
-                var i                  = 0
+                val items      = av.l()
+                val mapBuilder = mapBinding.constructor.newObjectBuilder[K, V](items.size())
+                var i          = 0
+                // Using null instead of Option to avoid allocation overhead in hot codec path
                 var error: SchemaError = null
                 while i < items.size() && error == null do
                   val entry = items.get(i)
@@ -623,8 +639,8 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
                     (kd, vd) match
                       case (Right(k), Right(v)) =>
                         mapBinding.constructor.addObject(mapBuilder, k.asInstanceOf[K], v.asInstanceOf[V])
-                      case (Left(e), _) => error = e
-                      case (_, Left(e)) => error = e
+                      case (Left(e), _) => error = e.atIndex(i)
+                      case (_, Left(e)) => error = e.atIndex(i)
                   else error = SchemaError.expectationMismatch(Nil, s"Expected M attribute at index $i")
                   i += 1
                 if error != null then Left(error)

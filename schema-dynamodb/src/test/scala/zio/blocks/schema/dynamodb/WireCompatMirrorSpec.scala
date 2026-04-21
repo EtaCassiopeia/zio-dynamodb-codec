@@ -131,8 +131,15 @@ object WireCompatMirrorSpec extends ZIOSpecDefault:
   val nonesItem = fullItem.copy(pivotSeqNum = None, version = None, tamperKey = None)
 
   def toZ(item: LedgerItem): ZLedgerItem = ZLedgerItem(
-    item.contractId, item.sortKey, item.uniqueId, item.status,
-    item.orderings, item.pivotSeqNum, item.date, item.version, item.tamperKey
+    item.contractId,
+    item.sortKey,
+    item.uniqueId,
+    item.status,
+    item.orderings,
+    item.pivotSeqNum,
+    item.date,
+    item.version,
+    item.tamperKey
   )
 
   def dEncode(item: LedgerItem): java.util.Map[String, AttributeValue] =

@@ -29,9 +29,13 @@ jobs:
 
       - name: Import PGP key
         run: |
-          echo "Importing PGP key..."
-          printf '%s' "$PGP_SECRET" | base64 -d | gpg --batch --import
-          echo "PGP key imported. Listing keys:"
+          echo "PGP_SECRET length: ${#PGP_SECRET}"
+          echo "PGP_SECRET first 20 chars: ${PGP_SECRET:0:20}"
+          printf '%s' "$PGP_SECRET" | base64 -d > /tmp/secret-key.gpg
+          echo "Decoded key size: $(wc -c < /tmp/secret-key.gpg) bytes"
+          gpg --batch --import /tmp/secret-key.gpg
+          rm -f /tmp/secret-key.gpg
+          echo "Imported keys:"
           gpg --list-secret-keys --keyid-format long
         env:
           PGP_SECRET: ${{ secrets.PGP_SECRET }}

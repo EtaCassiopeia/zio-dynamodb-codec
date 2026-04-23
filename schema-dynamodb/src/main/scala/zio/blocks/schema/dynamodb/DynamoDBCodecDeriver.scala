@@ -152,7 +152,8 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
     val idx: Int,
     val isOptional: Boolean,
     val isTransient: Boolean,
-    val prefix: Option[String]
+    val prefix: Option[String],
+    val keyRole: KeyRole
   ):
     var codec: DynamoDBCodec[Any]      = null
     var innerCodec: DynamoDBCodec[Any] = null
@@ -226,6 +227,15 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
           val prefix = field.modifiers.collectFirst {
             case m: Modifier.config if m.key == "dynamodb.key-prefix" => m.value
           }
+          val keyRole = field.modifiers
+            .collectFirst {
+              case m: Modifier.config if m.key == "dynamodb.key" =>
+                m.value match
+                  case "partition" => KeyRole.Partition
+                  case "sort"      => KeyRole.Sort
+                  case other       => KeyRole.None
+            }
+            .getOrElse(KeyRole.None)
 
           infos(i) = new FieldInfo(
             name = name,
@@ -233,7 +243,8 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
             idx = i,
             isOptional = isOpt,
             isTransient = isTransient,
-            prefix = prefix
+            prefix = prefix,
+            keyRole = keyRole
           )
           i += 1
 
@@ -252,6 +263,13 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
           case e: Throwable =>
             if isRecursive then recursiveRecordCache.get.remove(typeId)
             throw e
+
+      // Build FieldMeta array for exposing key metadata to TableCodec
+      val fieldMeta = new Array[FieldMeta](fieldCount)
+      var mi        = 0
+      while mi < fieldCount do
+        fieldMeta(mi) = new FieldMeta(infos(mi).name, infos(mi).keyRole, infos(mi).prefix, mi)
+        mi += 1
 
       DynamoDBCodec.record[A](
         enc = (value, output) =>
@@ -321,6 +339,8 @@ class DynamoDBCodecDeriver(val fieldNameMapper: NameMapper = NameMapper.identity
 
           if errors != null then Left(errors)
           else Right(constructor.construct(regs, 0))
+        ,
+        fieldMeta = fieldMeta
       )
     }
 

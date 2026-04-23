@@ -3,6 +3,16 @@ package zio.blocks.schema.dynamodb
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue
 import zio.blocks.schema.SchemaError
 
+enum KeyRole:
+  case Partition, Sort, None
+
+final private[dynamodb] class FieldMeta(
+  val name: String,
+  val keyRole: KeyRole,
+  val prefix: Option[String],
+  val idx: Int
+)
+
 abstract class DynamoDBCodec[A]:
 
   def encode(value: A, output: java.util.Map[String, AttributeValue]): Unit
@@ -43,6 +53,9 @@ abstract class DynamoDBCodec[A]:
       def decodeValue(av: AttributeValue): Either[SchemaError, B] =
         self.decodeValue(av).flatMap(from)
 
+  /** Field metadata for record codecs. Returns empty array for non-record codecs. */
+  private[dynamodb] def fieldMetadata: Array[FieldMeta] = Array.empty
+
   final def encodeSafe(value: A): Either[SchemaError, java.util.Map[String, AttributeValue]] =
     try
       val map = new java.util.HashMap[String, AttributeValue]()
@@ -73,8 +86,10 @@ object DynamoDBCodec:
 
   def record[A](
     enc: (A, java.util.Map[String, AttributeValue]) => Unit,
-    dec: java.util.Map[String, AttributeValue] => Either[SchemaError, A]
+    dec: java.util.Map[String, AttributeValue] => Either[SchemaError, A],
+    fieldMeta: Array[FieldMeta] = Array.empty
   ): DynamoDBCodec[A] =
+    val meta = fieldMeta
     new DynamoDBCodec[A]:
       def encode(value: A, output: java.util.Map[String, AttributeValue]): Unit =
         enc(value, output)
@@ -90,3 +105,5 @@ object DynamoDBCodec:
       def decodeValue(av: AttributeValue): Either[SchemaError, A] =
         if av.hasM then dec(av.m())
         else Left(SchemaError.expectationMismatch(Nil, "Expected M (map) attribute"))
+
+      override private[dynamodb] def fieldMetadata: Array[FieldMeta] = meta
